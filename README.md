@@ -67,11 +67,16 @@ Done:
 
 In progress / planned:
 
+- [ ] **Test the Recruiter (CV tailoring) agent** — the tailoring path isn't tested yet
+- [ ] **Object mapping** — add the mapping layer that normalizes ingested/scraped
+      records into the shared data model
+- [ ] **De-duplicate identities** — the same person (and company) can appear more
+      than once across sources; merge them into a single canonical record
+- [ ] **Better "add person" UI** — capture the referral graph per contact:
+      *who led me to them* (inbound) and *who they can lead me to* (outbound intros)
 - [ ] **Web dashboard** — Next.js console (`web/`) over the same SQLite DB (partial)
-- [ ] Better 2nd-degree connection inference and review UI
 - [ ] Automated tests + CI
 - [ ] One-command setup (`docker compose up` for Redis + app)
 - [ ] Configurable LLM provider docs (Gemini / Ollama / Claude / OpenAI)
-- [ ] Rate-limit / cost dashboard for BrightData usage
 
 > This is a personal side project and a portfolio piece — not production software.
