@@ -1,0 +1,46 @@
+{
+  "name": "job-agent-league",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A league of agents that finds you a job: searcher, hot-approach, and recruiter.",
+  "bin": {
+    "job": "src/cli.ts"
+  },
+  "scripts": {
+    "job": "tsx src/cli.ts",
+    "ingest": "tsx src/cli.ts ingest",
+    "search": "tsx src/cli.ts search",
+    "connect": "tsx src/cli.ts connect",
+    "tailor": "tsx src/cli.ts tailor",
+    "report": "tsx src/cli.ts report",
+    "all": "tsx src/cli.ts run-all",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "commander": "^13.1.0",
+    "csv-parse": "^5.6.0",
+    "dotenv": "^16.4.7",
+    "fastest-levenshtein": "^1.0.16",
+    "ioredis": "^5.4.2",
+    "ollama": "^0.5.12",
+    "p-queue": "^8.1.0",
+    "unpdf": "^0.12.1",
+    "xlsx": "^0.18.5",
+    "zod": "^3.24.1"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "openai": "^4.83.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.13.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

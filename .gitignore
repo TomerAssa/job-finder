@@ -1,0 +1,33 @@
+# ─── Dependencies & build output ────────────────────────────────────────────
+node_modules/
+dist/
+.next/
+*.tsbuildinfo
+
+# ─── Secrets ─────────────────────────────────────────────────────────────────
+# Never commit real env values. Keep only the .env.example template.
+.env
+.env.*
+!.env.example
+*.rtf
+
+# ─── Personal inputs & results (people, jobs, CV, connections) ───────────────
+# CV, LinkedIn connections and the company list are private inputs.
+data/input/*
+!data/input/.gitkeep
+!data/input/README.md
+# Scraped positions, matches, the SQLite db and all reports are private output.
+data/output/
+
+# ─── Design handoff archives ─────────────────────────────────────────────────
+*.zip
+
+# ─── OS / logs ───────────────────────────────────────────────────────────────
+.DS_Store
+*.log
+
+# ─── Local tooling ───────────────────────────────────────────────────────────
+.claude/
+
+# ─── Design handoff (contains real contact data) ─────────────────────────────
+design_handoff_job_console/

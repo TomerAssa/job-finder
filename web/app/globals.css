@@ -1,0 +1,15 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  background: #0b1220;
+  color: #dbe6f8;
+  font-family: var(--body), "IBM Plex Sans Hebrew", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { text-decoration: none; }
+a:hover { text-decoration: underline; }
+button { font-family: inherit; }
+input, textarea, select { font-family: inherit; outline: none; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--line, #28385f); border-radius: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
