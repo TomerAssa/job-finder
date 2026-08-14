@@ -4,8 +4,8 @@ import { Command } from 'commander';
 import { paths } from './config.js';
 import { db, initDb } from './db/client.js';
 import { closeRedis } from './redis.js';
-import { ingestCompanies } from './ingest/companies.js';
 import { ingestConnections } from './ingest/connections.js';
+import { ingestCompanyList, listSectors } from './ingest/companyLists.js';
 import { ingestCv } from './ingest/cv.js';
 import { runSearcher, resetNoPmCompanies } from './agents/searcher/index.js';
 import { runHotApproach } from './agents/hotApproach/index.js';
@@ -52,8 +52,10 @@ program
   .action(async (o) => {
     db(); // ensure schema exists
     if (existsSync(o.companies)) {
-      const r = ingestCompanies(o.companies);
-      console.log(`🏢 Companies: +${r.inserted} new (${r.total} total)`);
+      // Routed through the list ingest so every company belongs to a named list;
+      // otherwise it exists but no sector search can ever reach it.
+      const r = ingestCompanyList(o.companies);
+      console.log(`🏢 ${r.list}: +${r.newCompanies} new companies (${r.companiesInFile} rows)`);
     } else console.warn(`⚠️  Companies CSV not found: ${o.companies}`);
 
     if (existsSync(o.connections)) {
@@ -67,13 +69,50 @@ program
     } else console.warn(`⚠️  CV PDF not found: ${o.cv} (needed for tailoring)`);
   });
 
+// ── ingest-list ──
+program
+  .command('ingest-list')
+  .description('Load a company-list CSV as a named, searchable sector.')
+  .argument('<files...>', 'one or more "Companies List …" CSV exports')
+  .option('--name <name>', 'override the list name (only valid with a single file)')
+  .action((files: string[], o) => {
+    db();
+    if (o.name && files.length > 1) throw new Error('--name only works with a single file');
+    for (const file of files) {
+      if (!existsSync(file)) { console.warn(`⚠️  Not found: ${file}`); continue; }
+      const r = ingestCompanyList(file, o.name);
+      console.log(`📋 ${r.list}: ${r.companiesInFile} rows · +${r.newCompanies} new companies · ${r.linked} linked`);
+    }
+    for (const s of listSectors()) {
+      console.log(`   ${s.name.padEnd(34)} ${String(s.companies).padStart(4)} companies · ${s.withPositions} crawled`);
+    }
+  });
+
 // ── search ──
 program
   .command('search')
   .description('Find open positions for each company (SERP → careers/ATS → parse).')
   .option('--limit <n>', 'process at most N companies', (v) => parseInt(v, 10))
+  .option('--sector <names>', 'restrict to these company lists (comma-separated, or ids)')
   .option('--force', 'ignore freshness cache and re-check everything', false)
-  .action((o) => runSearcher({ limit: o.limit, force: o.force }));
+  .action((o) => {
+    let listIds: number[] | undefined;
+    if (o.sector) {
+      const wanted = String(o.sector).split(',').map((s: string) => s.trim()).filter(Boolean);
+      const all = listSectors();
+      listIds = wanted.map((w: string) => {
+        const byId = Number(w);
+        const hit = all.find((l) => l.id === byId || l.name.toLowerCase() === w.toLowerCase());
+        if (!hit) {
+          throw new Error(`No company list called "${w}". Known: ${all.map((l) => l.name).join(', ')}`);
+        }
+        return hit.id;
+      });
+      const scope = all.filter((l) => listIds!.includes(l.id));
+      console.log(`🔎 Scope: ${scope.map((l) => `${l.name} (${l.companies})`).join(', ')}`);
+    }
+    return runSearcher({ limit: o.limit, force: o.force, listIds });
+  });
 
 // ── export-new (xlsx of newly scraped Israel PM roles) ──
 program
@@ -179,7 +218,7 @@ program
   .option('--limit <n>', 'limit companies searched / positions tailored', (v) => parseInt(v, 10))
   .action(async (o) => {
     db();
-    if (existsSync(paths.companiesCsv)) console.log(`🏢 Companies: +${ingestCompanies(paths.companiesCsv).inserted} new`);
+    if (existsSync(paths.companiesCsv)) console.log(`🏢 Companies: +${ingestCompanyList(paths.companiesCsv).newCompanies} new`);
     if (existsSync(paths.connectionsCsv)) console.log(`👥 Connections: +${ingestConnections(paths.connectionsCsv).inserted} new`);
     if (existsSync(paths.cvPdf)) await ingestCv(paths.cvPdf);
     await runSearcher({ limit: o.limit });

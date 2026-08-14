@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { config } from '../../config.js';
+import { isAuthError } from '../../brightdata/client.js';
 import { serpSearch, type SerpResult } from '../../brightdata/serp.js';
 import { extract } from '../../llm/provider.js';
 import { normalizeCompany, similarity } from '../../util/normalize.js';
@@ -58,7 +59,11 @@ export async function resolveCareers(name: string, opts: ResolveOpts = {}): Prom
     let results: SerpResult[] = [];
     try {
       results = await serpSearch(q, 10);
-    } catch {
+    } catch (err) {
+      // Bad credentials fail every query the same way. Swallowing that would
+      // report "no careers page found" for the whole list and mark each company
+      // checked, so it has to reach the caller.
+      if (isAuthError(err)) throw err;
       continue;
     }
     for (const r of results) {

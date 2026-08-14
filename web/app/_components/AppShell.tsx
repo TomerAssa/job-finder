@@ -37,6 +37,7 @@ export function AppShell({ counts, children }: { counts: NavCounts; children: Re
   const items = [
     { href: '/people', label: 'People', dot: V('cyan'), n: counts.people },
     { href: '/jobs', label: 'Jobs & Companies', dot: V('amber'), n: counts.jobs },
+    { href: '/search', label: 'Search', dot: V('violet'), n: null },
     { href: '/manage', label: 'Manage & dedupe', dot: V('ok'), n: counts.people },
   ];
 

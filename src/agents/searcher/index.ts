@@ -4,6 +4,7 @@ import { startLog, finishLog } from '../../db/checkLog.js';
 import type { CompanyRow } from '../../db/schema.js';
 import type { FoundPosition } from './types.js';
 import { config, requireBrightData } from '../../config.js';
+import { isAuthError } from '../../brightdata/client.js';
 import { isFresh, markFresh, redis } from '../../redis.js';
 import { resolveCareers } from './resolveCareers.js';
 import { extractPositions } from './extract.js';
@@ -13,6 +14,12 @@ import { isProductManager } from '../../util/roles.js';
 export interface SearchOpts {
   limit?: number;
   force?: boolean; // ignore Redis freshness and re-check
+  /**
+   * Restrict the crawl to companies in these lists (see `company_lists`).
+   * Without it the searcher walks every company it knows about, which is now
+   * thousands of rows across several sectors rather than one 500-row export.
+   */
+  listIds?: number[];
 }
 
 function upsertPositions(
@@ -134,6 +141,9 @@ async function processCompany(company: CompanyRow, force: boolean): Promise<stri
     const tag = product ? '★' : found ? '✓' : '·';
     return `${tag} ${company.name}: ${found} roles, ${product} PM${liProduct ? ` (${liProduct} via LinkedIn)` : ''} via ${source}${needsLlm ? ' [needs-llm]' : ''}`;
   } catch (err) {
+    // Credentials are wrong: let the run abort rather than recording this
+    // company as an error it could recover from on a retry.
+    if (isAuthError(err)) throw err;
     let msg = err instanceof Error ? err.message : String(err);
     const cause = (err as any)?.cause;
     if (cause) msg += ` — cause: ${cause.message ?? cause.code ?? cause}`;
@@ -174,11 +184,21 @@ export async function resetNoPmCompanies(): Promise<number> {
 /** Run the searcher over pending/eligible companies with bounded concurrency. */
 export async function runSearcher(opts: SearchOpts = {}): Promise<void> {
   requireBrightData();
-  const where = opts.force ? '1=1' : `status IN ('pending','error')`;
-  const limit = opts.limit ? `LIMIT ${Number(opts.limit)}` : '';
+  const clauses = [opts.force ? '1=1' : `status IN ('pending','error')`];
+  const params: number[] = [];
+  if (opts.listIds?.length) {
+    clauses.push(
+      `id IN (SELECT company_id FROM company_list_members
+               WHERE list_id IN (${opts.listIds.map(() => '?').join(',')}))`,
+    );
+    params.push(...opts.listIds);
+  }
+  // `opts.limit != null`, not a truthiness check: `--limit 0` used to be falsy
+  // and silently meant "no limit", i.e. crawl everything.
+  const limit = opts.limit != null && Number.isFinite(opts.limit) ? `LIMIT ${Math.max(0, Number(opts.limit))}` : '';
   const companies = db()
-    .prepare(`SELECT * FROM companies WHERE ${where} ORDER BY id ${limit}`)
-    .all() as CompanyRow[];
+    .prepare(`SELECT * FROM companies WHERE ${clauses.join(' AND ')} ORDER BY id ${limit}`)
+    .all(...params) as CompanyRow[];
 
   if (companies.length === 0) {
     console.log('No companies to search. Run `npm run ingest` first, or pass --force to re-check.');
@@ -187,11 +207,35 @@ export async function runSearcher(opts: SearchOpts = {}): Promise<void> {
 
   console.log(`🔎 Searching ${companies.length} companies (concurrency ${config.searchConcurrency})…`);
   const queue = new PQueue({ concurrency: config.searchConcurrency });
+
+  // An expired token fails every request identically. Without this the run would
+  // walk the whole list, find nothing, and mark every company `checked` — which
+  // is worse than failing, because a later run then skips them all.
+  let authFailure: unknown = null;
+
   await queue.addAll(
     companies.map((c) => async () => {
-      const line = await processCompany(c, opts.force ?? false);
-      console.log('   ' + line);
+      if (authFailure) return;
+      try {
+        const line = await processCompany(c, opts.force ?? false);
+        console.log('   ' + line);
+      } catch (err) {
+        if (isAuthError(err)) {
+          authFailure = err;
+          queue.clear();
+          return;
+        }
+        throw err;
+      }
     }),
   );
+
+  if (authFailure) {
+    throw new Error(
+      `BrightData rejected the credentials, so nothing was searched: ` +
+        `${authFailure instanceof Error ? authFailure.message : String(authFailure)}\n` +
+        `Check BRIGHTDATA_API_KEY in .env — the companies were left untouched for a re-run.`,
+    );
+  }
   console.log('Done.');
 }
