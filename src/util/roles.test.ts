@@ -7,10 +7,23 @@ describe('the product-manager profile', () => {
   test('matches product management in its many flavours', () => {
     for (const t of [
       'Product Manager', 'Senior Product Manager', 'Group Product Manager',
-      'Technical Product Manager', 'Product Owner', 'Head of Product',
-      'VP Product', 'Director of Product', 'Chief Product Officer', 'AI Product Manager',
+      'Technical Product Manager', 'Product Owner', 'AI Product Manager',
+      'Associate Product Manager', 'Product Lead',
+      // Increasingly how startups advertise a hands-on PM role.
+      'Product Builder', 'Founding Product Manager',
     ]) {
       assert.equal(isProductManager(t), true, t);
+    }
+  });
+
+  test('excludes the executive tier', () => {
+    // Not reachable at the experience level this search targets, and they crowd
+    // out the roles that are.
+    for (const t of [
+      'VP Product', 'VP of Product', 'Vice President, Product', 'Head of Product',
+      'Director of Product', 'Director, Product Management', 'Chief Product Officer', 'CPO',
+    ]) {
+      assert.equal(isProductManager(t), false, t);
     }
   });
 

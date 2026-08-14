@@ -43,15 +43,24 @@ export function matchesTitle(title: string | null | undefined, matcher: TitleMat
  */
 export const PRODUCT_MANAGER: TitleMatcher = {
   include: [
-    'product manager', 'product owner', 'product management', 'product lead', 'product leader',
-    'head of product', 'vp product', 'vice president product', 'director of product',
-    'director product', 'group product', 'principal product', 'senior product', 'staff product',
-    'chief product officer', 'cpo',
+    'product manager', 'product owner', 'product management',
+    'product lead', 'product leader',
+    'associate product manager', 'apm',
+    'senior product', 'staff product', 'group product', 'principal product',
+    // "Product builder" is how a growing number of startups advertise a hands-on
+    // PM role, especially where the job spans product and delivery.
+    'product builder', 'product builders', 'founding product manager',
   ],
   exclude: [
+    // Adjacent roles that contain "product" but are not product management.
     'product marketing', 'product design', 'product designer', 'product analyst',
     'product support', 'product specialist', 'product operations', 'product ops',
     'project manager', 'program manager',
+    // Executive tier. Excluded deliberately: these are not reachable at the
+    // experience level this search targets, and they crowd out the roles that are.
+    'vp', 'vp product', 'vice president', 'svp', 'evp',
+    'chief product officer', 'cpo', 'chief',
+    'head of product', 'director of product', 'director product', 'director',
   ],
 };
 

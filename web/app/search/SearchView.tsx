@@ -108,7 +108,7 @@ export function SearchView({
 }
 
 function Results({ preview }: { preview: SearchPreview }) {
-  const { hits, uncrawled, companiesInScope } = preview;
+  const { hits, uncrawled, companiesInScope, missingYearsData, yearsFilterActive } = preview;
 
   return (
     <div style={{ marginTop: 22 }}>
@@ -129,6 +129,20 @@ function Results({ preview }: { preview: SearchPreview }) {
             <code style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>npm run job search</code>{' '}
             — it costs roughly one or two scrape credits per company, so it is a
             deliberate step rather than something this page does for you.
+          </p>
+        </div>
+      )}
+
+      {yearsFilterActive && missingYearsData > 0 && (
+        <div style={{ ...card, borderColor: V('amber'), padding: '12px 16px', marginBottom: 14 }}>
+          <div style={{ ...label, color: V('amber') }}>
+            the experience filter could not be applied to {missingYearsData} of these
+          </div>
+          <p style={{ color: V('muted'), fontSize: 12.5, margin: '6px 0 0', lineHeight: 1.6 }}>
+            They have no experience range on record, so they are shown rather than hidden.
+            Reading a range out of a listing is a separate step —{' '}
+            <code style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>npm run job enrich --all</code>{' '}
+            fills it in for roles beyond product management.
           </p>
         </div>
       )}

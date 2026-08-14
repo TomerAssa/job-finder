@@ -52,6 +52,17 @@ export interface SearchPreview {
   /** Companies in scope that have never been crawled — what a run would cost. */
   uncrawled: number;
   companiesInScope: number;
+  /**
+   * Hits with no experience range on record, while a years filter is active.
+   *
+   * Those roles are kept — a listing that omits its range should not vanish —
+   * but the distinction matters: "this job says nothing about experience" and
+   * "we never read this job closely enough to know" look identical in the
+   * results and are not the same claim. Only enriched roles have a range, and
+   * enrichment runs on product roles by default.
+   */
+  missingYearsData: number;
+  yearsFilterActive: boolean;
 }
 
 export function previewSearch(params: SearchParams, limit = 200): SearchPreview {
@@ -82,10 +93,13 @@ export function previewSearch(params: SearchParams, limit = 200): SearchPreview 
     .all(...params.sectors) as Record<string, any>[];
 
   const matcher = matcherFromKeywords(params.titleKeywords);
+  const yearsFilterActive = params.minYears != null || params.maxYears != null;
   const hits: SearchHit[] = [];
+  let missingYearsData = 0;
   for (const r of rows) {
     if (!matchesTitle(r.title, matcher)) continue;
     if (!yearsOverlap({ minYears: r.min_years ?? null, maxYears: r.max_years ?? null }, params)) continue;
+    if (yearsFilterActive && r.min_years == null && r.max_years == null) missingYearsData++;
     hits.push({
       id: r.id,
       companyId: r.company_id,
@@ -114,5 +128,5 @@ export function previewSearch(params: SearchParams, limit = 200): SearchPreview 
       .get(...params.sectors) as { c: number }
   ).c;
 
-  return { hits, uncrawled, companiesInScope };
+  return { hits, uncrawled, companiesInScope, missingYearsData, yearsFilterActive };
 }

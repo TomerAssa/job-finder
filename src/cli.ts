@@ -8,6 +8,7 @@ import { ingestConnections } from './ingest/connections.js';
 import { ingestCompanyList, listSectors } from './ingest/companyLists.js';
 import { ingestCv } from './ingest/cv.js';
 import { runSearcher, resetNoPmCompanies } from './agents/searcher/index.js';
+import { reclassifyPositions } from './agents/searcher/reclassify.js';
 import { runHotApproach } from './agents/hotApproach/index.js';
 import { runRecruiter } from './agents/recruiter/index.js';
 import { runEnrich } from './agents/enrich/index.js';
@@ -112,6 +113,23 @@ program
       console.log(`🔎 Scope: ${scope.map((l) => `${l.name} (${l.companies})`).join(', ')}`);
     }
     return runSearcher({ limit: o.limit, force: o.force, listIds });
+  });
+
+// ── reclassify ──
+program
+  .command('reclassify')
+  .description('Re-apply the target-role rules to positions already scraped.')
+  .option('--titles <list>', 'comma-separated title keywords (default: the product-manager profile)')
+  .option('--dry-run', 'report what would change without writing', false)
+  .action((o) => {
+    db();
+    const matcher = o.titles
+      ? { include: String(o.titles).split(',').map((t: string) => t.trim()).filter(Boolean) }
+      : undefined;
+    const r = reclassifyPositions(matcher as never, { dryRun: o.dryRun });
+    console.log(`${o.dryRun ? '🔍 Would change' : '✅ Reclassified'} ${r.scanned} positions: +${r.added} / -${r.removed} → ${r.nowMatching} matching`);
+    if (r.addedExamples.length) console.log(`   now matching: ${r.addedExamples.join(' · ')}`);
+    if (r.removedExamples.length) console.log(`   dropped:      ${r.removedExamples.join(' · ')}`);
   });
 
 // ── export-new (xlsx of newly scraped Israel PM roles) ──
