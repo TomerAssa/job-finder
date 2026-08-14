@@ -2,7 +2,7 @@
 import { existsSync } from 'node:fs';
 import { Command } from 'commander';
 import { paths } from './config.js';
-import { db } from './db/client.js';
+import { db, initDb } from './db/client.js';
 import { closeRedis } from './redis.js';
 import { ingestCompanies } from './ingest/companies.js';
 import { ingestConnections } from './ingest/connections.js';
@@ -19,6 +19,22 @@ import { runDoctor } from './doctor.js';
 
 const program = new Command();
 program.name('job').description('A league of agents that finds you a job.');
+
+// Every command needs a current schema, so migrations run before any of them.
+// `db()` throws if migrations are outstanding, which keeps a stale schema from
+// failing one query at a time somewhere deep in an agent.
+program.hook('preAction', async () => {
+  const applied = await initDb();
+  if (applied.length) console.log(`🗃️  Applied ${applied.length} migration(s): ${applied.join(', ')}`);
+});
+
+// ── migrate ──
+program
+  .command('migrate')
+  .description('Apply pending database migrations (runs automatically before every command).')
+  .action(() => {
+    console.log('✅ Database schema is up to date.');
+  });
 
 // ── doctor ──
 program
