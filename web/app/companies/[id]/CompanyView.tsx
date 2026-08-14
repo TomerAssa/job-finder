@@ -7,7 +7,7 @@ import type { RoleItem } from '@/lib/data/jobs';
 import type { PersonListItem } from '@/lib/data/people';
 import { decideCandidate, promoteConnections, setRoleNote, setRoleStatus } from '@/lib/actions';
 import {
-  V, card, chip, circleBadge, ErrorNote, ghostBtn, initials, inp, label, PageHead,
+  V, card, chip, circleBadge, ErrorNote, ghostBtn, initials, inp, label, pill,
   primaryBtn, roleStatusMeta, roleStatusOrder, senChip, StatusChip,
 } from '../../_components/ui';
 
@@ -117,7 +117,7 @@ export function CompanyView({
         )}
 
         {/* ── Scan for PMs and HR ── */}
-        <PeopleScan companyId={company.id} companyName={company.name} candidates={candidates} />
+        <PeopleScan companyId={company.id} companyName={company.name} candidates={candidates} linkedinVerified={company.linkedinVerified} />
       </div>
     </>
   );
@@ -158,21 +158,54 @@ function ConnectionPicker({ connections }: { connections: CompanyConnection[] })
  * land in a review list and only become people when kept. Errors are shown —
  * the previous version swallowed every failure and rendered "no profiles found".
  */
-function PeopleScan({ companyId, companyName, candidates }: { companyId: number; companyName: string; candidates: CandidateItem[] }) {
+const ROLE_PRESETS = [
+  { key: 'product', label: 'Product', why: 'Peers who can tell you what the team is actually like' },
+  { key: 'hr', label: 'HR / Talent', why: 'The people who move an application forward' },
+  { key: 'engineering', label: 'Engineering leadership', why: 'Hiring managers for technical teams' },
+  { key: 'founders', label: 'Founders & execs', why: 'At a small company, the person who decides' },
+];
+
+function PeopleScan({
+  companyId, companyName, candidates, linkedinVerified,
+}: {
+  companyId: number;
+  companyName: string;
+  candidates: CandidateItem[];
+  linkedinVerified: boolean;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ran, setRan] = useState(false);
+  const [roleKeys, setRoleKeys] = useState<string[]>(['product', 'hr']);
+  const [customTitles, setCustomTitles] = useState('');
+  const [location, setLocation] = useState('');
+  const [verification, setVerification] = useState<{ verified: boolean; reason: string } | null>(null);
+  const [partialFailures, setPartialFailures] = useState<string[]>([]);
   const [, start] = useTransition();
+
+  const toggleRole = (key: string) =>
+    setRoleKeys((r) => (r.includes(key) ? r.filter((x) => x !== key) : [...r, key]));
 
   const scan = async () => {
     setBusy(true);
     setError(null);
+    setPartialFailures([]);
     try {
-      const res = await fetch(`/api/companies/${companyId}/people-scan`, { method: 'POST' });
+      const res = await fetch(`/api/companies/${companyId}/people-scan`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          roleKeys,
+          customTitles: customTitles.split(',').map((s) => s.trim()).filter(Boolean),
+          location: location.trim() || null,
+        }),
+      });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error ?? `Scan failed (HTTP ${res.status})`);
       setRan(true);
+      setVerification(body.verification ?? null);
+      setPartialFailures(body.partialFailures ?? []);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -181,18 +214,61 @@ function PeopleScan({ companyId, companyName, candidates }: { companyId: number;
     }
   };
 
+  const canScan = roleKeys.length > 0 || customTitles.trim().length > 0;
+
   return (
     <section style={{ ...card, padding: '16px 18px' }}>
-      <div style={label}>Find product &amp; HR people at {companyName}</div>
+      <div style={label}>Find people at {companyName}</div>
 
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
-        <button onClick={scan} disabled={busy} style={{ ...ghostBtn, opacity: busy ? 0.6 : 1 }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 12 }}>
+        {ROLE_PRESETS.map((p) => (
+          <button key={p.key} onClick={() => toggleRole(p.key)} title={p.why} style={pill(roleKeys.includes(p.key))}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 200px', gap: 10, marginTop: 12 }}>
+        <input
+          value={customTitles}
+          onChange={(e) => setCustomTitles(e.target.value)}
+          placeholder="Other titles, comma separated — e.g. solutions architect"
+          dir="auto"
+          style={inp()}
+        />
+        <input
+          value={location}
+          onChange={(e) => setLocation(e.target.value)}
+          placeholder="Region (optional)"
+          dir="auto"
+          style={inp()}
+        />
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
+        <button onClick={scan} disabled={busy || !canScan} style={{ ...ghostBtn, opacity: busy || !canScan ? 0.6 : 1 }}>
           {busy ? '⟳ searching…' : candidates.length ? '⟳ Search again' : '⟳ Search LinkedIn'}
         </button>
-        <span style={{ color: V('faint'), fontSize: 12.5 }}>
-          Costs one search credit per query. Results are guesses you confirm below.
+        <span style={{ color: V('faint'), fontSize: 12.5, flex: 1, minWidth: 260 }}>
+          One credit per selected group, plus the company identity check.
+          {linkedinVerified && ' This company is already verified.'}
         </span>
       </div>
+
+      {verification && (
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 12.5 }}>
+          <span style={{ ...chip(verification.verified ? V('ok') : V('amber')), fontSize: 10.5 }}>
+            {verification.verified ? 'identity verified' : 'unverified'}
+          </span>
+          <span style={{ color: V('muted') }}>{verification.reason}</span>
+        </div>
+      )}
+
+      {partialFailures.length > 0 && (
+        <div style={{ marginTop: 10, color: V('amber'), fontSize: 12.5 }}>
+          {partialFailures.map((f) => <div key={f}>⚠ {f}</div>)}
+        </div>
+      )}
 
       {error && <div style={{ marginTop: 12 }}><ErrorNote>{error}</ErrorNote></div>}
 

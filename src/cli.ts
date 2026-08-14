@@ -89,14 +89,30 @@ program
 // ── people (finder for a single company; used by the web "Expand on employees") ──
 program
   .command('people')
-  .description('Find PM peers + HR/recruiters in Israel for a company via LinkedIn.')
+  .description('Find people worth talking to at a company (product, HR, engineering, founders).')
   .requiredOption('--company <id>', 'company id', (v) => parseInt(v, 10))
+  .option('--roles <keys>', 'comma-separated presets: product,hr,engineering,founders', 'product,hr')
+  .option('--titles <list>', 'comma-separated extra job titles to search for')
+  .option('--location <hint>', 'region hint, e.g. \'israel OR "tel aviv"\'')
+  .option('--skip-verification', 'do not check the company LinkedIn page first', false)
   .option('--json', 'print result as JSON', false)
   .action(async (o) => {
     db();
-    const found = await findPeople(o.company);
-    if (o.json) process.stdout.write(JSON.stringify(found));
-    else console.log(`Found ${found.length} people for company ${o.company}`);
+    const result = await findPeople(o.company, {
+      roleKeys: String(o.roles).split(',').map((s: string) => s.trim()).filter(Boolean),
+      customTitles: o.titles ? String(o.titles).split(',') : [],
+      location: o.location ?? null,
+      skipVerification: o.skipVerification,
+    });
+    if (o.json) {
+      process.stdout.write(JSON.stringify(result));
+      return;
+    }
+    if (result.verification) {
+      console.log(`${result.verification.verified ? '✅' : '⚠️ '} ${result.verification.reason}`);
+    }
+    for (const f of result.partialFailures) console.warn(`⚠️  ${f}`);
+    console.log(`Found ${result.candidates.length} candidates to review for company ${o.company}`);
   });
 
 // ── import-tracker ──
