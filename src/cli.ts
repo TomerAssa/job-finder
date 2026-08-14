@@ -17,6 +17,7 @@ import { findPeople } from './agents/people/index.js';
 import { exportNewPositions } from './agents/export/newXlsx.js';
 import { generateReports } from './report/generate.js';
 import { runDoctor } from './doctor.js';
+import { seedDemo, purgeDemo, demoStatus } from './demo/seed.js';
 
 const program = new Command();
 program.name('job').description('A league of agents that finds you a job.');
@@ -35,6 +36,27 @@ program
   .description('Apply pending database migrations (runs automatically before every command).')
   .action(() => {
     console.log('✅ Database schema is up to date.');
+  });
+
+// ── demo ──
+program
+  .command('seed-demo')
+  .description('Fill an empty database with clearly-invented sample data.')
+  .option('--force', 'seed even though the database already holds real data', false)
+  .action((o) => {
+    db();
+    const r = seedDemo({ force: o.force });
+    console.log(`🌱 Demo data: ${r.companies} companies, ${r.positions} positions, ${r.people} people.`);
+    console.log('   Every row is flagged as demo. Finish setup, or run `npm run job purge-demo`, to clear it.');
+  });
+
+program
+  .command('purge-demo')
+  .description('Delete every demo row. Nothing real is touched.')
+  .action(() => {
+    db();
+    const r = purgeDemo();
+    console.log(`🧹 Removed ${r.people} people, ${r.positions} positions, ${r.companies} companies.`);
   });
 
 // ── doctor ──

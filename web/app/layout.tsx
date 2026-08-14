@@ -14,7 +14,7 @@ export const metadata: Metadata = { title: 'Job Console — Outreach Intelligenc
 export const dynamic = 'force-dynamic';
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  let counts = { people: 0, jobs: 0, companies: 0 };
+  let counts = { people: 0, jobs: 0, companies: 0, demoRows: 0 };
   let dbError: string | null = null;
   try {
     counts = navCounts();

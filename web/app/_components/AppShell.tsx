@@ -15,6 +15,8 @@ export interface NavCounts {
   people: number;
   jobs: number;
   companies: number;
+  /** Demo rows still loaded. Drives the placeholder banner. */
+  demoRows?: number;
 }
 
 const THEME_KEY = 'job-console-theme';
@@ -39,6 +41,7 @@ export function AppShell({ counts, children }: { counts: NavCounts; children: Re
     { href: '/jobs', label: 'Jobs & Companies', dot: V('amber'), n: counts.jobs },
     { href: '/search', label: 'Search', dot: V('violet'), n: null },
     { href: '/manage', label: 'Manage & dedupe', dot: V('ok'), n: counts.people },
+    { href: '/setup', label: 'Setup', dot: V('faint'), n: null },
   ];
 
   const themeVars = Object.fromEntries(
@@ -85,6 +88,22 @@ export function AppShell({ counts, children }: { counts: NavCounts; children: Re
       </aside>
 
       <main style={{ height: '100vh', overflow: 'auto', padding: '30px 36px 72px', maxWidth: 1340 }}>
+        {/* Placeholder data must never be mistaken for the user's own contacts. */}
+        {!!counts.demoRows && (
+          <Link
+            href="/setup"
+            style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 22, padding: '10px 14px', borderRadius: 10, textDecoration: 'none', background: V('panel2'), border: `1px solid ${V('amber')}`, color: V('text') }}
+          >
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '.14em', textTransform: 'uppercase', color: V('amber') }}>
+              demo data
+            </span>
+            <span style={{ fontSize: 13 }}>
+              {counts.demoRows} invented placeholder rows are loaded so the screens are not
+              empty. None of this is real.
+            </span>
+            <span style={{ marginLeft: 'auto', fontSize: 12, color: V('amber') }}>finish setup →</span>
+          </Link>
+        )}
         {children}
       </main>
     </div>

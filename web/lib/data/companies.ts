@@ -126,7 +126,7 @@ export function introductionsIntoCompany(companyId: number): Array<{ id: number;
   ).map((r) => ({ id: r.id, from: r.from_name, note: r.note }));
 }
 
-export function navCounts(): { people: number; jobs: number; companies: number } {
+export function navCounts(): { people: number; jobs: number; companies: number; demoRows: number } {
   const handle = db();
   const one = (sql: string) => (handle.prepare(sql).get() as { c: number }).c;
   return {
@@ -135,5 +135,9 @@ export function navCounts(): { people: number; jobs: number; companies: number }
                  LEFT JOIN position_requirements r ON r.position_id = p.id
                 WHERE p.is_product = 1 AND (r.is_israel IS NULL OR r.is_israel = 1)`),
     companies: one('SELECT COUNT(*) c FROM companies'),
+    demoRows:
+      one('SELECT COUNT(*) c FROM people WHERE is_demo = 1') +
+      one('SELECT COUNT(*) c FROM companies WHERE is_demo = 1') +
+      one('SELECT COUNT(*) c FROM positions WHERE is_demo = 1'),
   };
 }
