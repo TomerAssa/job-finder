@@ -187,6 +187,7 @@ function BudgetChip({ budget }: { budget: Budget | null }) {
 interface CrawlRun {
   id: number;
   status: 'running' | 'done' | 'stopped' | 'error';
+  phase?: string;
   companies_done: number;
   companies_total: number;
   positions_added: number;
@@ -370,10 +371,14 @@ function Crawl({ sectors, unvisited, due, fresh, budget, onDone }: {
         <div style={{ ...card, borderColor: running ? V('cyan') : V('lineSoft'), padding: '12px 14px', display: 'grid', gap: 9 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ ...label, color: running ? V('cyan') : V('faint') }}>
-              {running ? 'searching' : run.status === 'stopped' ? 'stopped' : run.status === 'error' ? 'failed' : 'finished'}
+              {!running
+                ? run.status === 'stopped' ? 'stopped' : run.status === 'error' ? 'failed' : 'finished'
+                : run.phase === 'reading' ? 'reading the new roles' : 'searching'}
             </span>
             <span style={{ fontSize: 13 }}>
-              {run.companies_done.toLocaleString()} of {run.companies_total.toLocaleString()} companies
+              {run.phase === 'reading' && running
+                ? 'all companies visited — filling in experience and location'
+                : `${run.companies_done.toLocaleString()} of ${run.companies_total.toLocaleString()} companies`}
             </span>
             {running && <span style={{ ...label, color: V('faint') }}>{pct}%</span>}
             {running && (
@@ -386,7 +391,7 @@ function Crawl({ sectors, unvisited, due, fresh, budget, onDone }: {
           <div style={{ height: 6, borderRadius: 999, background: V('bg2'), overflow: 'hidden' }}>
             <div
               style={{
-                width: `${pct}%`,
+                width: `${run.phase === 'reading' && running ? 100 : pct}%`,
                 height: '100%',
                 background: running ? V('cyan') : V('ok'),
                 transition: 'width .4s ease',

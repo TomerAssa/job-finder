@@ -30,6 +30,13 @@ export interface SearchOpts {
    * it is still going, rather than only between batches.
    */
   onCompany?: (done: number, total: number) => void;
+  /**
+   * Checked before each company starts. Lets a long run stop on a budget or a
+   * cancellation without the caller having to slice the work into batches — and
+   * batches are expensive here, because each one drains the queue before the
+   * next refills it.
+   */
+  shouldStop?: () => boolean | Promise<boolean>;
 }
 
 export interface SearchRunResult {
@@ -313,9 +320,16 @@ export async function runSearcher(opts: SearchOpts = {}): Promise<SearchRunResul
   let processed = 0;
   let skipped = 0;
 
+  let stopped = false;
+
   await queue.addAll(
     companies.map((c) => async () => {
-      if (authFailure) return;
+      if (authFailure || stopped) return;
+      if (opts.shouldStop && (await opts.shouldStop())) {
+        stopped = true;
+        queue.clear();
+        return;
+      }
       try {
         const line = await processCompany(c, opts.force ?? false);
         console.log('   ' + line);

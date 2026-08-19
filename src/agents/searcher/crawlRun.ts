@@ -16,9 +16,6 @@ import { runSearcher } from './index.js';
 import { runEnrich } from '../enrich/index.js';
 import { config } from '../../config.js';
 
-/** Companies per pass. Small enough that progress moves visibly. */
-const CHUNK = 10;
-
 export interface CrawlRunRow {
   id: number;
   sectors_json: string;
@@ -26,6 +23,8 @@ export interface CrawlRunRow {
   credit_limit: number | null;
   force: number;
   status: 'running' | 'done' | 'stopped' | 'error';
+  /** searching | reading | finished — what it is doing right now. */
+  phase: string;
   companies_done: number;
   companies_total: number;
   positions_added: number;
@@ -152,6 +151,7 @@ async function execute(id: number): Promise<void> {
 
   const base = stats(sectors);
   const creditsAtStart = await usage();
+  let lastKnownSpend = 0;
 
   const update = db().prepare(
     `UPDATE crawl_runs SET companies_done=?, positions_added=?, roles_added=?, positions_closed=?,
@@ -159,66 +159,54 @@ async function execute(id: number): Promise<void> {
   );
 
   let done = 0;
-  // The loop can only ever ask for so many chunks. Progress is reported by the
-  // searcher itself, but a counter that fails to advance must not be able to
-  // spend money forever — an earlier version diffed a global counter that read
-  // as unchanged under the bundler and looped until it was killed.
-  const maxIterations = Math.ceil(run.companies_total / CHUNK) + 2;
-  let iterations = 0;
 
-  while (iterations < maxIterations) {
-    iterations++;
+  const current = getRun(id)!;
+  const target = current.companies_total;
 
-    const current = getRun(id);
-    if (!current || current.status !== 'running') return; // stopped from outside
-
-    const remainingTarget = current.companies_total - done;
-    if (remainingTarget <= 0) break;
-    if (dueCount(sectors, force) === 0) break;
-
-    const spent = (await usage()) - creditsAtStart;
-    if (current.credit_limit != null && spent >= current.credit_limit) break;
-
-    const chunk = Math.min(CHUNK, remainingTarget);
-    const chunkStart = done;
-
-    // Reported per company so the bar moves during a chunk, not only after it.
-    const result = await runSearcher({
+  if (target > 0 && dueCount(sectors, force) > 0) {
+    // One queue for the whole run, not a batch at a time. Companies take
+    // anywhere from a few seconds to a few minutes, so draining the queue
+    // between batches left most workers idle waiting on the slowest member of
+    // each one — the reason a run from the browser trailed the same work from a
+    // terminal, which has always used a single queue.
+    await runSearcher({
       listIds: sectors,
-      limit: chunk,
+      limit: target,
       force,
       onCompany: (n) => {
-        const at = chunkStart + n;
-        db()
-          .prepare('UPDATE crawl_runs SET companies_done=?, updated_at=? WHERE id=? AND status=\'running\'')
-          .run(Math.min(at, current.companies_total), now(), id);
+        done = n;
+        const after = stats(sectors);
+        update.run(
+          Math.min(n, target),
+          after.positions - base.positions,
+          after.roles - base.roles,
+          after.closed - base.closed,
+          lastKnownSpend,
+          now(),
+          id,
+        );
+      },
+      shouldStop: async () => {
+        const live = getRun(id);
+        if (!live || live.status !== 'running') return true;
+        // Spend is read here rather than per company: it is a network round trip
+        // to Redis, and checking it between companies is often enough.
+        const spent = (await usage()) - creditsAtStart;
+        lastKnownSpend = spent;
+        return live.credit_limit != null && spent >= live.credit_limit;
       },
     });
-
-    done += result.processed + result.skipped;
-
-    const after = stats(sectors);
-    update.run(
-      Math.min(done, current.companies_total),
-      after.positions - base.positions,
-      after.roles - base.roles,
-      after.closed - base.closed,
-      (await usage()) - creditsAtStart,
-      now(),
-      id,
-    );
-
-    // A chunk that did nothing means there is nothing left this loop can reach.
-    if (result.processed + result.skipped === 0) break;
   }
 
   // Reading listings for experience and location costs no scrape credits, and
   // without it the filters the user came for do nothing on anything new.
+  db().prepare(`UPDATE crawl_runs SET phase='reading', updated_at=? WHERE id=?`).run(now(), id);
   try {
     await runEnrich({ limit: 200 });
   } catch {
     /* enrichment is best-effort; the roles are already saved */
   }
+  db().prepare(`UPDATE crawl_runs SET phase='finished', updated_at=? WHERE id=?`).run(now(), id);
 
   const final = stats(sectors);
   db()
