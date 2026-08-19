@@ -81,7 +81,7 @@ export function JobsView({ roles: initial }: { roles: RoleItem[] }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {filtered.map((r) => (
               <div key={r.id} style={{ ...card, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-                <Link href={`/companies/${r.companyId}`} style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0, textDecoration: 'none', color: V('text') }}>
+                <Link href={`/companies/${r.companyId}?role=${r.id}`} style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0, textDecoration: 'none', color: V('text') }}>
                   <span style={{ width: 14, color: V('amber') }}>{r.paths > 0 ? '★' : ''}</span>
                   <b style={{ minWidth: 150 }} dir="auto">{r.companyName}</b>
                   <span style={{ flex: 1, minWidth: 0 }} dir="auto">{r.title}</span>
@@ -153,7 +153,7 @@ function Board({ roles, onDrop }: { roles: RoleItem[]; onDrop: (id: number, stat
                   onDragEnd={() => setDrag(null)}
                   style={{ background: V('panel'), border: `1px solid ${V('line')}`, borderLeft: `3px solid ${color}`, borderRadius: 8, padding: '9px 11px', cursor: 'grab' }}
                 >
-                  <Link href={`/companies/${r.companyId}`} style={{ textDecoration: 'none', color: V('text') }}>
+                  <Link href={`/companies/${r.companyId}?role=${r.id}`} style={{ textDecoration: 'none', color: V('text') }}>
                     <div style={{ fontSize: 12.5, fontWeight: 600 }} dir="auto">{r.paths > 0 ? '★ ' : ''}{r.companyName}</div>
                     <div style={{ color: V('muted'), fontSize: 12 }} dir="auto">{r.title}</div>
                   </Link>

@@ -39,10 +39,28 @@ export interface SearchRunResult {
   skipped: number;
 }
 
+/**
+ * A link to the careers page is not a link to the job.
+ *
+ * When a page has no per-role links — a JS careers site read as text — the
+ * extractor sometimes returns the page's own URL for every role. Storing that
+ * makes "job ↗" go to an index rather than the posting, and makes two sightings
+ * of one role look like different postings because one run captured the page URL
+ * and another captured nothing.
+ */
+function positionUrl(raw: string | null | undefined, careersUrl: string | null): string | null {
+  const url = raw?.trim();
+  if (!url) return null;
+  if (!careersUrl) return url;
+  const strip = (u: string) => u.split(/[?#]/)[0].replace(/\/+$/, '').toLowerCase();
+  return strip(url) === strip(careersUrl) ? null : url;
+}
+
 function upsertPositions(
   companyId: number,
   source: string,
   positions: FoundPosition[],
+  careersUrl: string | null = null,
 ): { added: number; product: number; seen: Set<number> } {
   const insert = db().prepare(
     `INSERT INTO positions
@@ -69,7 +87,7 @@ function upsertPositions(
       if (!p.title) continue;
       const isProduct = isProductManager(p.title) ? 1 : 0;
       const title = p.title.trim();
-      const url = p.url ?? null;
+      const url = positionUrl(p.url, careersUrl);
       const candidates = siblings.all(companyId, title) as { id: number; title: string; url: string | null; source: string | null }[];
       const existed = candidates.find((c) => isSameJob(c, { title, url, source }));
       if (existed) {
@@ -170,7 +188,7 @@ async function processCompany(company: CompanyRow, force: boolean): Promise<stri
       found = result.positions.length;
       source = result.source;
       needsLlm = result.needsLlm;
-      const up = upsertPositions(company.id, source, result.positions);
+      const up = upsertPositions(company.id, source, result.positions, careersUrl);
       added = up.added;
       product = up.product;
       for (const id of up.seen) seen.add(id);
