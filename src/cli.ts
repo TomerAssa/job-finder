@@ -20,6 +20,31 @@ import { generateReports } from './report/generate.js';
 import { runDoctor } from './doctor.js';
 import { seedDemo, purgeDemo, demoStatus } from './demo/seed.js';
 
+
+/**
+ * Resolve `--sector` to company-list ids.
+ *
+ * Several list names contain a comma ("Aerospace, Defense & HLS"), so splitting
+ * on commas first would tear them in half. The whole string is tried as one name
+ * before it is treated as a list of them.
+ */
+function resolveSectors(raw: string): number[] {
+  const all = listSectors();
+  const byName = (w: string) =>
+    all.find((l) => l.name.toLowerCase() === w.trim().toLowerCase() || String(l.id) === w.trim());
+
+  const whole = byName(raw);
+  if (whole) return [whole.id];
+
+  return raw.split(',').map((w) => {
+    const hit = byName(w);
+    if (!hit) {
+      throw new Error(`No company list called "${w.trim()}". Known: ${all.map((l) => l.name).join(' | ')}`);
+    }
+    return hit.id;
+  });
+}
+
 const program = new Command();
 program.name('job').description('A league of agents that finds you a job.');
 
@@ -125,18 +150,9 @@ program
   .action((o) => {
     let listIds: number[] | undefined;
     if (o.sector) {
-      const wanted = String(o.sector).split(',').map((s: string) => s.trim()).filter(Boolean);
-      const all = listSectors();
-      listIds = wanted.map((w: string) => {
-        const byId = Number(w);
-        const hit = all.find((l) => l.id === byId || l.name.toLowerCase() === w.toLowerCase());
-        if (!hit) {
-          throw new Error(`No company list called "${w}". Known: ${all.map((l) => l.name).join(', ')}`);
-        }
-        return hit.id;
-      });
-      const scope = all.filter((l) => listIds!.includes(l.id));
-      console.log(`🔎 Scope: ${scope.map((l) => `${l.name} (${l.companies})`).join(', ')}`);
+      listIds = resolveSectors(String(o.sector));
+      const scope = listSectors().filter((l) => listIds!.includes(l.id));
+      console.log(`🔎 Scope: ${scope.map((l) => `${l.name} (${l.companies})`).join(' | ')}`);
     }
     return runSearcher({ limit: o.limit, force: o.force, listIds }).then(() => undefined);
   });
@@ -151,12 +167,7 @@ program
   .option('--force', 're-check even recently-checked companies', false)
   .action(async (o) => {
     db();
-    const all = listSectors();
-    const ids = String(o.sector).split(',').map((w: string) => {
-      const hit = all.find((l) => l.name.toLowerCase() === w.trim().toLowerCase() || String(l.id) === w.trim());
-      if (!hit) throw new Error(`No company list called "${w.trim()}"`);
-      return hit.id;
-    });
+    const ids = resolveSectors(String(o.sector));
     const run = startRun({
       sectors: ids,
       targetCompanies: o.companies ?? null,

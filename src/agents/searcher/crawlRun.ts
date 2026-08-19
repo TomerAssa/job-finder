@@ -46,6 +46,10 @@ export interface StartOptions {
   force?: boolean;
 }
 
+/** How often the expensive parts of progress are recomputed, in ms. */
+const STATS_EVERY_MS = 2000;
+const SPEND_EVERY_MS = 5000;
+
 const scope = (sectors: number[]) =>
   `IN (SELECT company_id FROM company_list_members WHERE list_id IN (${sectors.map(() => '?').join(',')}))`;
 
@@ -152,6 +156,9 @@ async function execute(id: number): Promise<void> {
   const base = stats(sectors);
   const creditsAtStart = await usage();
   let lastKnownSpend = 0;
+  let lastStatsAt = 0;
+  let lastSpendAt = Date.now();
+  let lastCounts = { positions: 0, roles: 0, closed: 0 };
 
   const update = db().prepare(
     `UPDATE crawl_runs SET companies_done=?, positions_added=?, roles_added=?, positions_closed=?,
@@ -173,14 +180,27 @@ async function execute(id: number): Promise<void> {
       listIds: sectors,
       limit: target,
       force,
+      // Both callbacks sit on the critical path of every company, so neither
+      // does more work than it has to. The counter is always current; the
+      // aggregate counts and the Redis spend lookup are refreshed on a timer,
+      // because a progress bar does not need them to the millisecond.
       onCompany: (n) => {
         done = n;
-        const after = stats(sectors);
+        const fresh = Date.now() - lastStatsAt > STATS_EVERY_MS;
+        if (fresh) {
+          lastStatsAt = Date.now();
+          const after = stats(sectors);
+          lastCounts = {
+            positions: after.positions - base.positions,
+            roles: after.roles - base.roles,
+            closed: after.closed - base.closed,
+          };
+        }
         update.run(
           Math.min(n, target),
-          after.positions - base.positions,
-          after.roles - base.roles,
-          after.closed - base.closed,
+          lastCounts.positions,
+          lastCounts.roles,
+          lastCounts.closed,
           lastKnownSpend,
           now(),
           id,
@@ -189,11 +209,15 @@ async function execute(id: number): Promise<void> {
       shouldStop: async () => {
         const live = getRun(id);
         if (!live || live.status !== 'running') return true;
-        // Spend is read here rather than per company: it is a network round trip
-        // to Redis, and checking it between companies is often enough.
-        const spent = (await usage()) - creditsAtStart;
-        lastKnownSpend = spent;
-        return live.credit_limit != null && spent >= live.credit_limit;
+
+        // Refreshed on a timer whether or not there is a ceiling: the figure is
+        // also what the progress panel reports, and a run showing "0 credits"
+        // while it spends them is worse than a slightly stale number.
+        if (Date.now() - lastSpendAt > SPEND_EVERY_MS) {
+          lastSpendAt = Date.now();
+          lastKnownSpend = (await usage()) - creditsAtStart;
+        }
+        return live.credit_limit != null && lastKnownSpend >= live.credit_limit;
       },
     });
   }
