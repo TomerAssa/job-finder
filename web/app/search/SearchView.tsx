@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { SearchHit, SearchPreview, SectorOption } from '@/lib/data/search';
 import type { SearchParams } from '../../../src/db/searches.js';
-import { V, card, chip, Empty, Field, ghostBtn, inp, label, PageHead, pill, primaryBtn, senChip } from '../_components/ui';
+import { V, card, chip, Empty, ErrorNote, Field, ghostBtn, inp, label, PageHead, pill, primaryBtn, senChip } from '../_components/ui';
 
 export function SearchView({
   sectors, params, preview,
@@ -61,7 +61,7 @@ export function SearchView({
                 key={s.id}
                 onClick={() => toggle(s.id)}
                 style={pill(selected.includes(s.id), V('violet'))}
-                title={`${s.companies} companies · ${s.crawled} already crawled`}
+                title={`${s.companies} companies · ${s.crawled} already visited by the crawler`}
               >
                 {s.name} <span style={{ opacity: 0.7 }}>({s.companies})</span>
               </button>
@@ -110,12 +110,12 @@ export function SearchView({
         </div>
       </section>
 
-      {preview && <Results preview={preview} />}
+      {preview && <Results preview={preview} sectors={selected} />}
     </>
   );
 }
 
-function Results({ preview }: { preview: SearchPreview }) {
+function Results({ preview, sectors }: { preview: SearchPreview; sectors: number[] }) {
   const { hits, uncrawled, companiesInScope, missingYearsData, yearsFilterActive } = preview;
 
   return (
@@ -129,17 +129,7 @@ function Results({ preview }: { preview: SearchPreview }) {
         </span>
       </div>
 
-      {uncrawled > 0 && (
-        <div style={{ ...card, borderColor: V('amber'), padding: '12px 16px', marginBottom: 14 }}>
-          <div style={{ ...label, color: V('amber') }}>{uncrawled} companies have never been crawled</div>
-          <p style={{ color: V('muted'), fontSize: 12.5, margin: '6px 0 0', lineHeight: 1.6 }}>
-            These results only cover companies already visited. To reach the rest, run{' '}
-            <code style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>npm run job search</code>{' '}
-            — it costs roughly one or two scrape credits per company, so it is a
-            deliberate step rather than something this page does for you.
-          </p>
-        </div>
-      )}
+      {uncrawled > 0 && <Crawl uncrawled={uncrawled} sectors={sectors} />}
 
       {yearsFilterActive && missingYearsData > 0 && (
         <div style={{ ...card, borderColor: V('amber'), padding: '12px 16px', marginBottom: 14 }}>
@@ -160,6 +150,90 @@ function Results({ preview }: { preview: SearchPreview }) {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {hits.map((h) => <HitRow key={h.id} hit={h} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Crawl the companies in scope that have not been visited.
+ *
+ * Deliberately a batch you size yourself. Crawling costs two to four credits per
+ * company against a monthly cap, so the page states the estimate before you
+ * commit and reports what the run actually cost afterwards — a button that
+ * quietly spends money is the wrong default.
+ */
+function Crawl({ uncrawled, sectors }: { uncrawled: number; sectors: number[] }) {
+  const router = useRouter();
+  const [limit, setLimit] = useState(20);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ crawled: number; newPositions: number; newTargetRoles: number; remaining: number } | null>(null);
+
+  const batch = Math.min(limit, uncrawled);
+
+  const crawl = async () => {
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await fetch('/api/search/crawl', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sectors, limit: batch }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error ?? `Crawl failed (HTTP ${res.status})`);
+      setResult(body);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ ...card, borderColor: V('amber'), padding: '14px 16px', marginBottom: 14 }}>
+      <div style={{ ...label, color: V('amber') }}>{uncrawled} companies here have never been crawled</div>
+      <p style={{ color: V('muted'), fontSize: 12.5, margin: '6px 0 12px', lineHeight: 1.6 }}>
+        These results only cover companies already visited. Crawling reads their careers
+        pages and costs roughly two to four scrape credits each.
+      </p>
+
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button onClick={crawl} disabled={busy} style={primaryBtn(busy)}>
+          {busy ? `crawling ${batch}…` : `Crawl ${batch} now`}
+        </button>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12.5, color: V('muted') }}>
+          batch
+          <input
+            value={limit}
+            onChange={(e) => setLimit(Math.max(1, Math.min(60, Number(e.target.value) || 1)))}
+            inputMode="numeric"
+            style={{ ...inp(), width: 62, padding: '5px 8px' }}
+          />
+        </label>
+        <span style={{ color: V('faint'), fontSize: 12 }}>
+          ≈ {batch * 2}–{batch * 4} credits · up to 60 per run, the rest from the CLI
+        </span>
+      </div>
+
+      {busy && (
+        <p style={{ color: V('faint'), fontSize: 12, margin: '10px 0 0' }}>
+          This takes a while — a few seconds per company. Leave the tab open.
+        </p>
+      )}
+
+      {error && <div style={{ marginTop: 12 }}><ErrorNote>{error}</ErrorNote></div>}
+
+      {result && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+          <span style={chip(V('ok'))}>{result.crawled} companies crawled</span>
+          <span style={chip(result.newPositions > 0 ? V('ok') : V('faint'))}>+{result.newPositions} positions</span>
+          <span style={chip(result.newTargetRoles > 0 ? V('cyan') : V('faint'))}>+{result.newTargetRoles} matching your titles</span>
+          <span style={chip(V('faint'))}>{result.remaining} left</span>
         </div>
       )}
     </div>

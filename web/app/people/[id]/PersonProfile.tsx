@@ -172,6 +172,7 @@ function MergePerson({ personId, name, candidates }: { personId: number; name: s
   const [q, setQ] = useState('');
   const [picked, setPicked] = useState<MergeCandidate | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const matches = q.trim()
     ? candidates.filter((c) => `${c.name} ${c.company}`.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 8)
@@ -180,8 +181,14 @@ function MergePerson({ personId, name, candidates }: { personId: number; name: s
   const merge = async () => {
     if (!picked) return;
     setBusy(true);
-    await mergePeople(personId, [picked.id]);
+    setError(null);
+    const res = await mergePeople(personId, [picked.id]);
     setBusy(false);
+    if (!res.ok) {
+      setError(res.error);
+      router.refresh();
+      return;
+    }
     setOpen(false);
     setPicked(null);
     setQ('');
@@ -200,8 +207,13 @@ function MergePerson({ personId, name, candidates }: { personId: number; name: s
   }
 
   return (
-    <section style={{ ...card, borderColor: V('cyan'), padding: '14px 16px' }}>
+    <section style={{ ...card, borderColor: V('cyan'), padding: '14px 16px', overflowWrap: 'anywhere' }}>
       <div style={{ ...label, color: V('cyan') }}>Merge into {name}</div>
+      {error && (
+        <div style={{ border: `1px solid ${V('red')}`, borderRadius: 8, padding: '9px 12px', marginTop: 10, fontSize: 12.5 }}>
+          <span style={{ ...label, color: V('red') }}>could not merge</span> {error}
+        </div>
+      )}
 
       {picked ? (
         <>
@@ -237,7 +249,7 @@ function MergePerson({ personId, name, candidates }: { personId: number; name: s
               <button
                 key={c.id}
                 onClick={() => setPicked(c)}
-                style={{ font: 'inherit', textAlign: 'left', display: 'flex', gap: 8, alignItems: 'baseline', padding: '7px 10px', borderRadius: 8, cursor: 'pointer', background: V('bg2'), border: `1px solid ${V('line')}`, color: V('text') }}
+                style={{ font: 'inherit', textAlign: 'left', display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', padding: '7px 10px', borderRadius: 8, cursor: 'pointer', background: V('bg2'), border: `1px solid ${V('line')}`, color: V('text'), overflowWrap: 'anywhere' }}
               >
                 <span style={{ fontWeight: 600, fontSize: 13 }} dir="auto">{c.name}</span>
                 <span style={{ color: V('faint'), fontSize: 12 }} dir="auto">

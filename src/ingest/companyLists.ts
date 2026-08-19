@@ -142,19 +142,31 @@ export interface SectorSummary {
   id: number;
   name: string;
   companies: number;
+  /** Companies the searcher has actually visited. */
+  visited: number;
+  /** Visited companies that yielded at least one role. */
   withPositions: number;
 }
 
-/** The lists available to search, with how much of each has been crawled. */
+/**
+ * The lists available to search.
+ *
+ * `visited` and `withPositions` are deliberately separate numbers. Most crawled
+ * companies yield nothing — no careers page resolved, or one the extractor could
+ * not read — and conflating the two makes a finished sector look half-done and
+ * invites paying to crawl it again.
+ */
 export function listSectors(): SectorSummary[] {
   return db()
     .prepare(
       `SELECT l.id, l.name,
               COUNT(m.company_id) AS companies,
+              SUM(CASE WHEN c.status = 'checked' THEN 1 ELSE 0 END) AS visited,
               SUM(CASE WHEN EXISTS(SELECT 1 FROM positions p WHERE p.company_id = m.company_id)
                        THEN 1 ELSE 0 END) AS withPositions
          FROM company_lists l
          LEFT JOIN company_list_members m ON m.list_id = l.id
+         LEFT JOIN companies c ON c.id = m.company_id
         GROUP BY l.id
         ORDER BY l.name COLLATE NOCASE`,
     )

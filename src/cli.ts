@@ -107,7 +107,10 @@ program
       console.log(`📋 ${r.list}: ${r.companiesInFile} rows · +${r.newCompanies} new companies · ${r.linked} linked`);
     }
     for (const s of listSectors()) {
-      console.log(`   ${s.name.padEnd(34)} ${String(s.companies).padStart(4)} companies · ${s.withPositions} crawled`);
+      console.log(
+        `   ${s.name.padEnd(34)} ${String(s.companies).padStart(4)} companies · ` +
+          `${String(s.visited).padStart(4)} visited · ${s.withPositions} with roles`,
+      );
     }
   });
 

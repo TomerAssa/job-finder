@@ -61,9 +61,19 @@ export async function deletePerson(personId: number) {
   touch('/people', '/manage');
 }
 
-export async function mergePeople(primaryId: number, duplicateIds: number[]) {
-  repo().mergePeople(primaryId, duplicateIds);
-  touch('/people', '/manage');
+export async function mergePeople(
+  primaryId: number,
+  duplicateIds: number[],
+): Promise<{ ok: true; merged: number; skipped: number } | { ok: false; error: string }> {
+  try {
+    const result = repo().mergePeople(primaryId, duplicateIds);
+    touch('/people', '/manage', `/people/${primaryId}`);
+    return { ok: true, ...result };
+  } catch (err) {
+    // Returned rather than thrown: a failed merge has to be readable in the
+    // dialog the user is looking at, not only in the server log.
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /**

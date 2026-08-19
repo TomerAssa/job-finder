@@ -573,10 +573,24 @@ export function createRepo(handle: Database.Database) {
   /**
    * Fold duplicates into one person: repoint every edge, fill the primary's empty
    * columns from the duplicates, then delete them.
+   *
+   * Both ends are checked first. A list open in the browser goes stale the moment
+   * anything is merged, so it is entirely normal for a second merge to name a row
+   * that no longer exists — and repointing records onto a deleted person fails
+   * deep inside the transaction with a bare "FOREIGN KEY constraint failed",
+   * which tells the user nothing.
    */
-  const mergePeople = (primaryId: number, duplicateIds: number[]): void => {
-    const dups = duplicateIds.filter((id) => id !== primaryId);
-    if (!dups.length) return;
+  const mergePeople = (primaryId: number, duplicateIds: number[]): { merged: number; skipped: number } => {
+    if (!getPerson(primaryId)) {
+      throw new Error(
+        `Cannot merge into person ${primaryId}: they are no longer in your list. ` +
+          `They were probably merged or deleted already — reload and try again.`,
+      );
+    }
+
+    const dups = duplicateIds.filter((id) => id !== primaryId && getPerson(id) != null);
+    const skipped = duplicateIds.filter((id) => id !== primaryId).length - dups.length;
+    if (!dups.length) return { merged: 0, skipped };
 
     const tx = handle.transaction(() => {
       for (const dupId of dups) {
@@ -623,6 +637,7 @@ export function createRepo(handle: Database.Database) {
 
     tx();
     recomputeCircles(handle);
+    return { merged: dups.length, skipped };
   };
 
   return {
