@@ -64,6 +64,9 @@ export interface SearchHit {
   paths: number;
   dismissed: boolean;
   closed: boolean;
+  /** Found by the run the user just watched. */
+  isNew: boolean;
+  discoveredAt: string;
 }
 
 export interface SearchPreview {
@@ -94,6 +97,8 @@ export interface PreviewOptions {
   includeDismissed?: boolean;
   /** Show roles whose posting has disappeared. Off by default. */
   includeClosed?: boolean;
+  /** Mark and float roles discovered at or after this timestamp. */
+  newSince?: string | null;
 }
 
 export function previewSearch(params: SearchParams, opts: PreviewOptions = {}): SearchPreview {
@@ -110,7 +115,7 @@ export function previewSearch(params: SearchParams, opts: PreviewOptions = {}): 
     .prepare(
       `SELECT p.id, p.company_id, c.name AS company_name, COALESCE(c.sector,'') AS sector,
               p.title, p.url, r.seniority, r.min_years, r.max_years, r.is_israel,
-              p.closed_at, t.status AS tracked_status, t.relevant AS tracked_relevant,
+              p.closed_at, p.discovered_at, t.status AS tracked_status, t.relevant AS tracked_relevant,
               COALESCE(r.normalized_location, p.location) AS loc,
               (
                 (SELECT COUNT(*) FROM people pe WHERE pe.works_company_id = p.company_id)
@@ -166,8 +171,16 @@ export function previewSearch(params: SearchParams, opts: PreviewOptions = {}): 
       paths: r.paths ?? 0,
       dismissed: isDismissed,
       closed: isClosed,
+      isNew: opts.newSince != null && r.discovered_at >= opts.newSince,
+      discoveredAt: r.discovered_at,
     });
     if (hits.length >= limit) break;
+  }
+
+  // Whatever the run just turned up goes first: that is what the user is here
+  // to look at, and it would otherwise be scattered through hundreds of rows.
+  if (opts.newSince) {
+    hits.sort((a, b) => Number(b.isNew) - Number(a.isNew) || b.paths - a.paths);
   }
 
   const scopeCompanySql = hasSectors

@@ -49,6 +49,7 @@ export default async function SearchPage({
       preview={submitted ? previewSearch(params, {
         includeDismissed: sp.dismissed === '1',
         includeClosed: sp.closed === '1',
+        newSince: typeof sp.since === 'string' ? sp.since : null,
       }) : null}
     />
   );

@@ -14,7 +14,10 @@ const Enrichment = z.object({
   must_have_skills: z.array(z.string()).optional(),
   nice_to_have_skills: z.array(z.string()).optional(),
   tech_stack: z.array(z.string()).optional(),
-  domain: z.string().nullable().optional(),
+  // The model returns a list here often enough to be worth accepting: a job can
+  // sit across "fintech" and "security", and rejecting the whole record over a
+  // shape difference loses every other field it got right.
+  domain: z.union([z.string(), z.array(z.string())]).nullable().optional(),
   employment_type: z.string().nullable().optional(),
   work_model: z.string().nullable().optional(),
   normalized_location: z.string().nullable().optional(),
@@ -111,7 +114,7 @@ export async function runEnrich(opts: { limit?: number; force?: boolean; all?: b
           must_have_skills: JSON.stringify(e.must_have_skills ?? []),
           nice_to_have_skills: JSON.stringify(e.nice_to_have_skills ?? []),
           tech_stack: JSON.stringify(e.tech_stack ?? []),
-          domain: e.domain ?? null,
+          domain: Array.isArray(e.domain) ? e.domain.join(', ') : e.domain ?? null,
           employment_type: e.employment_type ?? null,
           work_model: e.work_model ?? null,
           normalized_location: e.normalized_location ?? null,

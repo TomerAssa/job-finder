@@ -9,6 +9,7 @@ import { ingestCompanyList, listSectors } from './ingest/companyLists.js';
 import { ingestCv } from './ingest/cv.js';
 import { runSearcher, resetNoPmCompanies } from './agents/searcher/index.js';
 import { reclassifyPositions } from './agents/searcher/reclassify.js';
+import { startRun, getRun } from './agents/searcher/crawlRun.js';
 import { runHotApproach } from './agents/hotApproach/index.js';
 import { runRecruiter } from './agents/recruiter/index.js';
 import { runEnrich } from './agents/enrich/index.js';
@@ -137,7 +138,41 @@ program
       const scope = all.filter((l) => listIds!.includes(l.id));
       console.log(`🔎 Scope: ${scope.map((l) => `${l.name} (${l.companies})`).join(', ')}`);
     }
-    return runSearcher({ limit: o.limit, force: o.force, listIds });
+    return runSearcher({ limit: o.limit, force: o.force, listIds }).then(() => undefined);
+  });
+
+// ── crawl (long background-style run, also usable headless) ──
+program
+  .command('crawl')
+  .description('Run a long search over one or more sectors, reporting progress.')
+  .requiredOption('--sector <names>', 'comma-separated company lists')
+  .option('--companies <n>', 'stop after this many companies', (v) => parseInt(v, 10))
+  .option('--credits <n>', 'stop once this many credits are spent', (v) => parseInt(v, 10))
+  .option('--force', 're-check even recently-checked companies', false)
+  .action(async (o) => {
+    db();
+    const all = listSectors();
+    const ids = String(o.sector).split(',').map((w: string) => {
+      const hit = all.find((l) => l.name.toLowerCase() === w.trim().toLowerCase() || String(l.id) === w.trim());
+      if (!hit) throw new Error(`No company list called "${w.trim()}"`);
+      return hit.id;
+    });
+    const run = startRun({
+      sectors: ids,
+      targetCompanies: o.companies ?? null,
+      creditLimit: o.credits ?? null,
+      force: o.force,
+    });
+    console.log(`▶ run ${run.id}: up to ${run.companies_total} companies`);
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const r = getRun(run.id)!;
+      console.log(
+        `   ${r.status} ${r.companies_done}/${r.companies_total} · +${r.roles_added} roles · ` +
+          `+${r.positions_added} positions · ${r.credits_used} credits`,
+      );
+      if (r.status !== 'running') break;
+    }
   });
 
 // ── reclassify ──

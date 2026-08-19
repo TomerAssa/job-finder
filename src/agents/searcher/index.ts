@@ -24,6 +24,18 @@ export interface SearchOpts {
    * thousands of rows across several sectors rather than one 500-row export.
    */
   listIds?: number[];
+  /**
+   * Called after each company finishes. Lets a long run report progress while
+   * it is still going, rather than only between batches.
+   */
+  onCompany?: (done: number, total: number) => void;
+}
+
+export interface SearchRunResult {
+  /** Companies actually processed. Authoritative — the caller must not infer it. */
+  processed: number;
+  /** Selected but skipped as still fresh. */
+  skipped: number;
 }
 
 function upsertPositions(
@@ -226,7 +238,7 @@ export async function resetNoPmCompanies(): Promise<number> {
 }
 
 /** Run the searcher over pending/eligible companies with bounded concurrency. */
-export async function runSearcher(opts: SearchOpts = {}): Promise<void> {
+export async function runSearcher(opts: SearchOpts = {}): Promise<SearchRunResult> {
   requireBrightData();
   // Openings appear and close constantly, so a company is never finished — only
   // recently checked. Selecting on status alone meant a company was visited once
@@ -265,7 +277,7 @@ export async function runSearcher(opts: SearchOpts = {}): Promise<void> {
       `Nothing to search: every company in scope was checked within the last ` +
         `${config.checkTtlDays} days. Pass --force to re-check them anyway.`,
     );
-    return;
+    return { processed: 0, skipped: 0 };
   }
 
   console.log(`🔎 Searching ${companies.length} companies (concurrency ${config.searchConcurrency})…`);
@@ -275,6 +287,8 @@ export async function runSearcher(opts: SearchOpts = {}): Promise<void> {
   // walk the whole list, find nothing, and mark every company `checked` — which
   // is worse than failing, because a later run then skips them all.
   let authFailure: unknown = null;
+  let processed = 0;
+  let skipped = 0;
 
   await queue.addAll(
     companies.map((c) => async () => {
@@ -282,6 +296,9 @@ export async function runSearcher(opts: SearchOpts = {}): Promise<void> {
       try {
         const line = await processCompany(c, opts.force ?? false);
         console.log('   ' + line);
+        if (line.includes('skipped (checked recently)')) skipped++;
+        else processed++;
+        opts.onCompany?.(processed + skipped, companies.length);
       } catch (err) {
         if (isAuthError(err)) {
           authFailure = err;
@@ -301,4 +318,5 @@ export async function runSearcher(opts: SearchOpts = {}): Promise<void> {
     );
   }
   console.log('Done.');
+  return { processed, skipped };
 }
