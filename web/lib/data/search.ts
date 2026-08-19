@@ -1,6 +1,7 @@
 import 'server-only';
 import { db } from '../db';
 import { matcherFromKeywords, matchesTitle, yearsOverlap } from '../../../src/util/roles.js';
+import { matchesLocation } from '../../../src/util/location.js';
 import type { SearchParams } from '../../../src/db/searches.js';
 
 /**
@@ -77,7 +78,7 @@ export function previewSearch(params: SearchParams, limit = 200): SearchPreview 
   const rows = handle
     .prepare(
       `SELECT p.id, p.company_id, c.name AS company_name, COALESCE(c.sector,'') AS sector,
-              p.title, p.url, r.seniority, r.min_years, r.max_years,
+              p.title, p.url, r.seniority, r.min_years, r.max_years, r.is_israel,
               COALESCE(r.normalized_location, p.location) AS loc,
               (
                 (SELECT COUNT(*) FROM people pe WHERE pe.works_company_id = p.company_id)
@@ -99,6 +100,7 @@ export function previewSearch(params: SearchParams, limit = 200): SearchPreview 
   for (const r of rows) {
     if (!matchesTitle(r.title, matcher)) continue;
     if (!yearsOverlap({ minYears: r.min_years ?? null, maxYears: r.max_years ?? null }, params)) continue;
+    if (!matchesLocation({ location: r.loc ?? null, isIsrael: r.is_israel ?? null }, params.location)) continue;
     if (yearsFilterActive && r.min_years == null && r.max_years == null) missingYearsData++;
     hits.push({
       id: r.id,

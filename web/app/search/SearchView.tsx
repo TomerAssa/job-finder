@@ -86,7 +86,13 @@ export function SearchView({
             <input value={maxYears} onChange={(e) => setMaxYears(e.target.value)} inputMode="numeric" placeholder="—" style={inp()} />
           </Field>
           <Field l="Location">
-            <input value={location} onChange={(e) => setLocation(e.target.value)} dir="auto" style={inp()} />
+            <input
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              placeholder="Israel"
+              dir="auto"
+              style={inp()}
+            />
           </Field>
         </div>
 
@@ -97,7 +103,9 @@ export function SearchView({
           <span style={{ color: V('faint'), fontSize: 12, lineHeight: 1.6, flex: 1, minWidth: 280 }}>
             Leaving the title empty searches for product-management roles. A role that
             does not state its experience range is kept, not filtered out — most
-            listings omit it.
+            listings omit it. Asking for a country matches the cities in it, since
+            listings rarely name one: &ldquo;Israel&rdquo; finds Tel Aviv, Herzliya and
+            the rest. Type a city instead to narrow to it.
           </span>
         </div>
       </section>

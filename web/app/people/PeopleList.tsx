@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { PersonListItem } from '@/lib/data/people';
+import { RowActions } from './RowActions';
 import {
   V, card, chip, circleBadge, daysAgo, Empty, FilterGroup, giveMeta, inp, label,
   PageHead, personStatusOrder, primaryBtn, Segmented, statusMeta, StatusChip, td,
@@ -113,31 +114,38 @@ export function PeopleList({
       {view === 'cards' && filtered.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px,1fr))', gap: 12 }}>
           {filtered.map((p) => (
-            <Link key={p.id} href={`/people/${p.id}`} style={{ ...card, padding: '13px 15px', textDecoration: 'none', color: V('text'), display: 'block' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontWeight: 600 }} dir="auto">{p.name}</span>
-                <span style={circleBadge}>{p.circle != null ? `circle ${p.circle}` : 'circle —'}</span>
-              </div>
-              <div style={{ color: V('muted'), fontSize: 12.5, margin: '4px 0 8px' }} dir="auto">
-                {[p.role, p.companyName].filter(Boolean).join(' · ') || '—'}
-              </div>
-              {p.summary && (
-                <div style={{ color: V('faint'), fontSize: 12, marginBottom: 8, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }} dir="auto">
-                  {p.summary}
+            <div key={p.id} style={{ ...card, padding: '13px 15px', display: 'flex', flexDirection: 'column' }}>
+              <Link href={`/people/${p.id}`} style={{ textDecoration: 'none', color: V('text'), display: 'block' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontWeight: 600 }} dir="auto">{p.name}</span>
+                  <span style={circleBadge}>{p.circle != null ? `circle ${p.circle}` : 'circle —'}</span>
                 </div>
-              )}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                <StatusChip st={p.status} />
-                <span style={{ ...label, letterSpacing: '.04em' }}>
-                  {p.interactionCount > 0 ? `spoke ${daysAgo(p.lastInteractionAt)}` : 'never spoke'}
+                <div style={{ color: V('muted'), fontSize: 12.5, margin: '4px 0 8px' }} dir="auto">
+                  {[p.role, p.companyName].filter(Boolean).join(' · ') || '—'}
+                </div>
+                {p.summary && (
+                  <div style={{ color: V('faint'), fontSize: 12, marginBottom: 8, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }} dir="auto">
+                    {p.summary}
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                  <StatusChip st={p.status} />
+                  <span style={{ ...label, letterSpacing: '.04em' }}>
+                    {p.interactionCount > 0 ? `spoke ${daysAgo(p.lastInteractionAt)}` : 'never spoke'}
+                  </span>
+                </div>
+              </Link>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, paddingTop: 9, borderTop: `1px solid ${V('lineSoft')}` }}>
+                {p.ledMeToCount > 0 && (
+                  <span style={{ ...label, color: V('cyan') }}>
+                    led me to {p.ledMeToCount} {p.ledMeToCount === 1 ? 'contact' : 'contacts'}
+                  </span>
+                )}
+                <span style={{ marginLeft: 'auto' }}>
+                  <RowActions person={p} all={people} />
                 </span>
               </div>
-              {p.ledMeToCount > 0 && (
-                <div style={{ ...label, color: V('cyan'), marginTop: 8 }}>
-                  led me to {p.ledMeToCount} {p.ledMeToCount === 1 ? 'contact' : 'contacts'}
-                </div>
-              )}
-            </Link>
+            </div>
           ))}
         </div>
       )}
@@ -147,7 +155,7 @@ export function PeopleList({
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                {['Name', 'Role', 'Company', 'Circle', 'Led me to them', 'Status', 'Last talked', 'Contact'].map((h) => (
+                {['Name', 'Role', 'Company', 'Circle', 'Led me to them', 'Status', 'Last talked', 'Contact', ''].map((h) => (
                   <th key={h} style={{ ...label, textAlign: 'left', padding: '10px', borderBottom: `1px solid ${V('line')}`, whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr>
@@ -170,6 +178,9 @@ export function PeopleList({
                     ) : (
                       <span style={{ color: V('faint'), fontFamily: 'var(--mono)', fontSize: 11 }} dir="auto">{p.phone || '—'}</span>
                     )}
+                  </td>
+                  <td style={{ ...td(), whiteSpace: 'nowrap' }}>
+                    <RowActions person={p} all={people} compact />
                   </td>
                 </tr>
               ))}
