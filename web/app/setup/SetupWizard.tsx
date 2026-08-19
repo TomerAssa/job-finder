@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { SetupStatus } from '@/lib/data/setup';
 import { V, card, chip, ErrorNote, ghostBtn, label, PageHead, primaryBtn } from '../_components/ui';
+import { DropZone, KeyFields } from './DropZone';
 
 /**
  * First-run setup.
@@ -69,12 +70,11 @@ export function SetupWizard({ status }: { status: SetupStatus }) {
             ok={status.keys.llm}
             label={`LLM provider "${status.keys.llmProvider}" — reading job listings into structured fields`}
           />
-          {!keysDone && (
-            <P>
-              Copy <Code>.env.example</Code> to <Code>.env</Code> and fill in the missing
-              values. Ollama needs no key and keeps everything on your machine.
-            </P>
-          )}
+          <KeyFields onSaved={() => router.refresh()} />
+          <P>
+            You can also edit <Code>.env</Code> directly. Ollama needs no key at all and keeps
+            everything on your machine.
+          </P>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
             <button onClick={test} disabled={testing} style={{ ...ghostBtn, opacity: testing ? 0.6 : 1 }}>
               {testing ? 'testing…' : 'Test the connections'}
@@ -101,12 +101,24 @@ export function SetupWizard({ status }: { status: SetupStatus }) {
                 </div>
               ))}
             </div>
-          ) : (
-            <P>
-              Drop a company-list CSV in <Code>data/input/</Code> and load it as a named
-              sector: <Code>npm run job ingest-list &lt;file&gt;</Code>
-            </P>
-          )}
+          ) : null}
+
+          <div style={{ marginTop: status.companies.lists.length ? 14 : 6 }}>
+            <DropZone
+              kind="company-list"
+              title="a company list"
+              accept=".csv"
+              askName
+              onDone={() => router.refresh()}
+              hint={
+                <>
+                  Any CSV with a company-name column works. Exports from Startup Nation
+                  Central carry sector, size and funding, which the search then filters on.
+                  Adding another list is how you widen beyond one sector.
+                </>
+              }
+            />
+          </div>
         </Step>
 
         <Step n={3} title="Your LinkedIn connections" done={status.connections.total > 0} optional>
@@ -115,14 +127,24 @@ export function SetupWizard({ status }: { status: SetupStatus }) {
               {status.connections.total} imported, {status.connections.promoted} added to your
               people list. <Link href="/people/import?tab=pool" style={{ color: V('cyan') }}>Review the pool →</Link>
             </P>
-          ) : (
-            <P>
-              Optional, but it is what turns a job list into warm paths. Export from LinkedIn
-              (Settings → Data Privacy → Get a copy of your data → Connections), put{' '}
-              <Code>Connections.csv</Code> in <Code>data/input/</Code>, then{' '}
-              <Code>npm run ingest</Code>. It stays on your machine.
-            </P>
-          )}
+          ) : null}
+
+          <div style={{ marginTop: status.connections.total ? 14 : 6 }}>
+            <DropZone
+              kind="connections"
+              title="your connections export"
+              accept=".csv"
+              onDone={() => router.refresh()}
+              hint={
+                <>
+                  Entirely optional — searching works without it. It is what turns a list of
+                  jobs into a list of jobs you have a way into. Export from LinkedIn:
+                  Settings → Data Privacy → Get a copy of your data → Connections. The file
+                  stays on your machine.
+                </>
+              }
+            />
+          </div>
         </Step>
 
         <Step n={4} title="Find some jobs" done={status.positions.total > 0}>
