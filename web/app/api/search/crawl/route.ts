@@ -23,7 +23,7 @@ export const maxDuration = 800;
 const MAX_LIMIT = 60;
 
 export async function POST(req: Request) {
-  let body: { sectors?: number[]; limit?: number; enrich?: boolean } = {};
+  let body: { sectors?: number[]; limit?: number; enrich?: boolean; force?: boolean } = {};
   try {
     body = await req.json();
   } catch {
@@ -41,7 +41,7 @@ export async function POST(req: Request) {
   const spentBefore = await usage();
 
   try {
-    await runSearcher({ listIds: sectors, limit });
+    await runSearcher({ listIds: sectors, limit, force: body.force === true });
 
     // Only the newly-found roles, and only when asked: this is Gemini time, and
     // on a big batch it is the slow part.
@@ -58,7 +58,7 @@ export async function POST(req: Request) {
     const spentAfter = await usage();
 
     return NextResponse.json({
-      visited: after.visited - before.visited,
+      visited: after.runs - before.runs,
       newPositions: after.positions - before.positions,
       newTargetRoles: after.target - before.target,
       enriched,
@@ -96,12 +96,23 @@ function countUnenriched(handle: ReturnType<typeof db>, sectors: number[]): numb
   ).c;
 }
 
+const TTL_DAYS = Number(process.env.CHECK_TTL_DAYS ?? 7);
+
 function counts(handle: ReturnType<typeof db>, sectors: number[]) {
   const inScope = scope(sectors);
   const one = (sql: string) => (handle.prepare(sql).get(...sectors) as { c: number }).c;
   return {
-    visited: one(`SELECT COUNT(*) c FROM companies WHERE id ${inScope} AND status = 'checked'`),
-    pending: one(`SELECT COUNT(*) c FROM companies WHERE id ${inScope} AND status != 'checked'`),
+    // Companies processed, counted from the run log: on a re-check the company
+    // was already 'checked', so a status count would report zero work done.
+    runs: one(
+      `SELECT COUNT(*) c FROM check_log
+        WHERE agent = 'searcher' AND company_id ${inScope} AND status IN ('ok','error')`,
+    ),
+    // What is still outstanding: never visited, or stale again.
+    pending: one(
+      `SELECT COUNT(*) c FROM companies WHERE id ${inScope}
+         AND (last_checked_at IS NULL OR last_checked_at < datetime('now','-${TTL_DAYS} days'))`,
+    ),
     positions: one(`SELECT COUNT(*) c FROM positions WHERE company_id ${inScope}`),
     target: one(`SELECT COUNT(*) c FROM positions WHERE company_id ${inScope} AND is_product = 1`),
   };

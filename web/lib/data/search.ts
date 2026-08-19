@@ -16,19 +16,30 @@ export interface SectorOption {
   id: number;
   name: string;
   companies: number;
-  /** Companies the crawler has been to. */
-  visited: number;
-  /** Companies it has never been to — what a new search can still reach. */
+  /** Never looked at. */
   unvisited: number;
+  /** Looked at, but longer ago than the freshness window — listings move on. */
+  due: number;
+  /** Checked recently enough that re-reading would almost certainly find nothing new. */
+  fresh: number;
 }
+
+/**
+ * How long a check stays good for. Mirrors CHECK_TTL_DAYS, which the searcher
+ * uses to decide the same thing — the two must agree or the page will offer a
+ * batch the crawler then declines to run.
+ */
+export const CHECK_TTL_DAYS = Number(process.env.CHECK_TTL_DAYS ?? 7);
 
 export function sectorOptions(): SectorOption[] {
   return db()
     .prepare(
       `SELECT l.id, l.name,
               COUNT(m.company_id) AS companies,
-              SUM(CASE WHEN c.status = 'checked' THEN 1 ELSE 0 END) AS visited,
-              SUM(CASE WHEN c.status = 'checked' THEN 0 ELSE 1 END) AS unvisited
+              SUM(CASE WHEN c.last_checked_at IS NULL THEN 1 ELSE 0 END) AS unvisited,
+              SUM(CASE WHEN c.last_checked_at IS NOT NULL
+                        AND c.last_checked_at < datetime('now', ?) THEN 1 ELSE 0 END) AS due,
+              SUM(CASE WHEN c.last_checked_at >= datetime('now', ?) THEN 1 ELSE 0 END) AS fresh
          FROM company_lists l
          LEFT JOIN company_list_members m ON m.list_id = l.id
          LEFT JOIN companies c ON c.id = m.company_id
@@ -36,7 +47,7 @@ export function sectorOptions(): SectorOption[] {
         GROUP BY l.id
         ORDER BY l.name COLLATE NOCASE`,
     )
-    .all() as SectorOption[];
+    .all(`-${CHECK_TTL_DAYS} days`, `-${CHECK_TTL_DAYS} days`) as SectorOption[];
 }
 
 export interface SearchHit {

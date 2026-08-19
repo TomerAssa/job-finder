@@ -32,7 +32,9 @@ export function SearchView({
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState<number[]>(
-    params.sectors.length ? params.sectors : sectors.filter((s) => s.unvisited > 0).slice(0, 1).map((s) => s.id),
+    params.sectors.length
+      ? params.sectors
+      : sectors.filter((s) => s.unvisited + s.due > 0).slice(0, 1).map((s) => s.id),
   );
   const [titles, setTitles] = useState(params.titleKeywords.join(', '));
   const [minYears, setMinYears] = useState(params.minYears?.toString() ?? '');
@@ -49,6 +51,8 @@ export function SearchView({
 
   const chosen = sectors.filter((s) => selected.includes(s.id));
   const unvisited = chosen.reduce((n, s) => n + s.unvisited, 0);
+  const due = chosen.reduce((n, s) => n + s.due, 0);
+  const fresh = chosen.reduce((n, s) => n + s.fresh, 0);
 
   const applyFilters = () => {
     const q = new URLSearchParams();
@@ -88,12 +92,16 @@ export function SearchView({
               <button
                 key={s.id}
                 onClick={() => toggle(s.id)}
-                style={pill(selected.includes(s.id), s.unvisited > 0 ? V('violet') : V('faint'))}
-                title={`${s.companies} companies · ${s.visited} already visited`}
+                style={pill(selected.includes(s.id), s.unvisited + s.due > 0 ? V('violet') : V('faint'))}
+                title={`${s.companies} companies · ${s.unvisited} never visited · ${s.due} due for a re-check · ${s.fresh} checked recently`}
               >
                 {s.name}{' '}
                 <span style={{ opacity: 0.75 }}>
-                  {s.unvisited > 0 ? `${s.unvisited} new` : 'done'}
+                  {s.unvisited + s.due > 0
+                    ? [s.unvisited > 0 ? `${s.unvisited} new` : null, s.due > 0 ? `${s.due} due` : null]
+                        .filter(Boolean)
+                        .join(' · ')
+                    : 'up to date'}
                 </span>
               </button>
             ))}
@@ -118,6 +126,8 @@ export function SearchView({
         <Crawl
           sectors={selected}
           unvisited={unvisited}
+          due={due}
+          fresh={fresh}
           budget={budget}
           onDone={() => { loadBudget(); router.refresh(); }}
         />
@@ -162,20 +172,32 @@ function BudgetChip({ budget }: { budget: Budget | null }) {
   );
 }
 
-function Crawl({ sectors, unvisited, budget, onDone }: {
+/**
+ * Visit companies and read their careers pages.
+ *
+ * A company is never "done" — only recently checked. Openings appear and close
+ * continuously, so the work is: everything never visited, plus everything last
+ * looked at longer ago than the freshness window. Re-reading a known careers
+ * page is also the cheap case, since the URL no longer has to be resolved.
+ */
+function Crawl({ sectors, unvisited, due, fresh, budget, onDone }: {
   sectors: number[];
   unvisited: number;
+  due: number;
+  fresh: number;
   budget: Budget | null;
   onDone: () => void;
 }) {
   const [limit, setLimit] = useState(25);
+  const [force, setForce] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<
     { visited: number; newPositions: number; newTargetRoles: number; enriched: number; remaining: number; creditsUsed: number | null } | null
   >(null);
 
-  const batch = Math.max(0, Math.min(limit, unvisited));
+  const pool = force ? unvisited + due + fresh : unvisited + due;
+  const batch = Math.max(0, Math.min(limit, pool));
   const perCompany = budget?.perCompany ?? 3;
   const estimate = Math.round(batch * perCompany);
   const overBudget = budget?.remaining != null && estimate > budget.remaining;
@@ -188,7 +210,7 @@ function Crawl({ sectors, unvisited, budget, onDone }: {
       const res = await fetch('/api/search/crawl', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sectors, limit: batch }),
+        body: JSON.stringify({ sectors, limit: batch, force }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error ?? `Search failed (HTTP ${res.status})`);
@@ -205,7 +227,11 @@ function Crawl({ sectors, unvisited, budget, onDone }: {
     <div style={{ display: 'grid', gap: 10 }}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <button style={primaryBtn(busy || batch === 0 || overBudget)} disabled={busy || batch === 0 || overBudget} onClick={run}>
-          {busy ? `searching ${batch} companies…` : batch === 0 ? 'Nothing new to visit' : `Search ${batch} new companies`}
+          {busy
+            ? `searching ${batch} companies…`
+            : batch === 0
+              ? 'Everything here was checked recently'
+              : `Search ${batch} companies`}
         </button>
 
         {batch > 0 && (
@@ -224,8 +250,21 @@ function Crawl({ sectors, unvisited, budget, onDone }: {
           <span style={{ ...label, color: overBudget ? V('red') : V('faint') }}>
             ≈ {estimate.toLocaleString()} credits
             {budget?.basis === 'measured' ? ' (from your own runs)' : ' (rough)'}
-            {unvisited > batch && ` · ${(unvisited - batch).toLocaleString()} more after this`}
+            {pool > batch && ` · ${(pool - batch).toLocaleString()} more after this`}
           </span>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ ...label, color: V('faint') }}>
+          {unvisited.toLocaleString()} never visited · {due.toLocaleString()} due for a
+          re-check · {fresh.toLocaleString()} checked recently
+        </span>
+        {fresh > 0 && (
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12.5, color: V('muted'), cursor: 'pointer' }}>
+            <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
+            include the {fresh.toLocaleString()} checked in the last few days
+          </label>
         )}
       </div>
 

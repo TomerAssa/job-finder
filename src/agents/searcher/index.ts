@@ -13,7 +13,11 @@ import { isProductManager } from '../../util/roles.js';
 
 export interface SearchOpts {
   limit?: number;
-  force?: boolean; // ignore Redis freshness and re-check
+  /**
+   * Re-check every company in scope, however recently it was visited.
+   * Without this, companies checked within CHECK_TTL_DAYS are left alone.
+   */
+  force?: boolean;
   /**
    * Restrict the crawl to companies in these lists (see `company_lists`).
    * Without it the searcher walks every company it knows about, which is now
@@ -184,7 +188,19 @@ export async function resetNoPmCompanies(): Promise<number> {
 /** Run the searcher over pending/eligible companies with bounded concurrency. */
 export async function runSearcher(opts: SearchOpts = {}): Promise<void> {
   requireBrightData();
-  const clauses = [opts.force ? '1=1' : `status IN ('pending','error')`];
+  // Openings appear and close constantly, so a company is never finished — only
+  // recently checked. Selecting on status alone meant a company was visited once
+  // and never again, which made a fully-crawled sector look permanently done
+  // while its listings moved on without us. Staleness is judged from
+  // last_checked_at rather than Redis, because the Redis keys expire and the
+  // question "when did we last look" has to survive that.
+  const clauses = [
+    opts.force
+      ? '1=1'
+      : `(status IN ('pending','error')
+          OR last_checked_at IS NULL
+          OR last_checked_at < datetime('now', '-${Number(config.checkTtlDays)} days'))`,
+  ];
   const params: number[] = [];
   if (opts.listIds?.length) {
     clauses.push(
@@ -197,11 +213,18 @@ export async function runSearcher(opts: SearchOpts = {}): Promise<void> {
   // and silently meant "no limit", i.e. crawl everything.
   const limit = opts.limit != null && Number.isFinite(opts.limit) ? `LIMIT ${Math.max(0, Number(opts.limit))}` : '';
   const companies = db()
-    .prepare(`SELECT * FROM companies WHERE ${clauses.join(' AND ')} ORDER BY id ${limit}`)
+    .prepare(
+      // Never-visited first, then whatever has been waiting longest.
+      `SELECT * FROM companies WHERE ${clauses.join(' AND ')}
+        ORDER BY (last_checked_at IS NOT NULL), last_checked_at, id ${limit}`,
+    )
     .all(...params) as CompanyRow[];
 
   if (companies.length === 0) {
-    console.log('No companies to search. Run `npm run ingest` first, or pass --force to re-check.');
+    console.log(
+      `Nothing to search: every company in scope was checked within the last ` +
+        `${config.checkTtlDays} days. Pass --force to re-check them anyway.`,
+    );
     return;
   }
 
