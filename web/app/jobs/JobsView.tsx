@@ -1,6 +1,7 @@
 'use client';
-import { useMemo, useState, useTransition } from 'react';
+import { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import type { RoleItem } from '@/lib/data/jobs';
 import { setRoleStatus } from '@/lib/actions';
 import {
@@ -8,14 +9,54 @@ import {
   roleStatusOrder, Segmented, senChip,
 } from '../_components/ui';
 
+/** Which field the text box matches. Shown, so it is never a guess. */
+const SEARCH_FIELDS = [
+  ['all', 'Everything'],
+  ['company', 'Company'],
+  ['title', 'Job title'],
+  ['location', 'Location'],
+] as const;
+type SearchField = (typeof SEARCH_FIELDS)[number][0];
+
 export function JobsView({ roles: initial }: { roles: RoleItem[] }) {
+  const router = useRouter();
+  const params = useSearchParams();
   const [roles, setRoles] = useState(initial);
-  const [view, setView] = useState<'list' | 'board'>('list');
-  const [statusF, setStatusF] = useState('all');
-  const [senF, setSenF] = useState('all');
-  const [pathF, setPathF] = useState('all');
-  const [q, setQ] = useState('');
   const [, start] = useTransition();
+
+  // View and filters live in the URL: a reload, a back button or a shared link
+  // all land on the same screen. Losing the board every time you looked at a
+  // company made it useless for actually working through a list.
+  const view = (params.get('view') === 'board' ? 'board' : 'list') as 'list' | 'board';
+  // Roles you have not dealt with yet are the point of the list; everything
+  // else is history, one click away.
+  const statusF = params.get('status') ?? 'relevant';
+  const senF = params.get('sen') ?? 'all';
+  const pathF = params.get('path') ?? 'all';
+  const field = (params.get('field') ?? 'all') as SearchField;
+  const q = params.get('q') ?? '';
+
+  const setParam = useCallback(
+    (patch: Record<string, string | null>) => {
+      const next = new URLSearchParams(params.toString());
+      for (const [k, v] of Object.entries(patch)) {
+        if (v == null || v === '' || (k === 'status' && v === 'relevant')) next.delete(k);
+        else next.set(k, v);
+      }
+      const qs = next.toString();
+      router.replace(qs ? `/jobs?${qs}` : '/jobs', { scroll: false });
+    },
+    [params, router],
+  );
+
+  // Typing should not push a history entry per keystroke.
+  const [draft, setDraft] = useState(q);
+  useEffect(() => setDraft(q), [q]);
+  useEffect(() => {
+    if (draft === q) return;
+    const t = setTimeout(() => setParam({ q: draft }), 250);
+    return () => clearTimeout(t);
+  }, [draft, q, setParam]);
 
   const seniorities = useMemo(() => [...new Set(roles.map((r) => r.seniority))], [roles]);
 
@@ -30,8 +71,13 @@ export function JobsView({ roles: initial }: { roles: RoleItem[] }) {
     if (pathF === 'warm' && r.paths === 0) return false;
     if (pathF === 'nopath' && r.paths > 0) return false;
     if (q.trim()) {
-      const hay = `${r.companyName} ${r.title} ${r.location}`.toLowerCase();
-      if (!hay.includes(q.trim().toLowerCase())) return false;
+      const needle = q.trim().toLowerCase();
+      const hay =
+        field === 'company' ? r.companyName
+        : field === 'title' ? r.title
+        : field === 'location' ? r.location
+        : `${r.companyName} ${r.title} ${r.location}`;
+      if (!hay.toLowerCase().includes(needle)) return false;
     }
     return true;
   });
@@ -43,7 +89,7 @@ export function JobsView({ roles: initial }: { roles: RoleItem[] }) {
       <PageHead
         title="Jobs & Companies"
         sub={`${filtered.length} of ${roles.length} roles · ${companyCount} companies`}
-        right={<Segmented value={view} options={[['list', 'List'], ['board', 'Board']]} onChange={(v) => setView(v as 'list' | 'board')} />}
+        right={<Segmented value={view} options={[['list', 'List'], ['board', 'Board']]} onChange={(v) => setParam({ view: v === 'board' ? 'board' : null })} />}
       />
 
       {view === 'list' && (
@@ -52,30 +98,44 @@ export function JobsView({ roles: initial }: { roles: RoleItem[] }) {
             <FilterGroup
               title="Status"
               value={statusF}
-              onChange={setStatusF}
+              onChange={(v) => setParam({ status: v })}
               options={[['all', 'All'], ...roleStatusOrder.map((s) => [s, roleStatusMeta[s].label] as [string, string])]}
               colorFor={(v) => roleStatusMeta[v]?.color}
             />
             <FilterGroup
               title="Seniority"
               value={senF}
-              onChange={setSenF}
+              onChange={(v) => setParam({ sen: v === 'all' ? null : v })}
               options={[['all', 'All'], ...seniorities.map((s) => [s, cap(s)] as [string, string])]}
             />
             <FilterGroup
               title="Path"
               value={pathF}
-              onChange={setPathF}
+              onChange={(v) => setParam({ path: v === 'all' ? null : v })}
               options={[['all', 'All'], ['warm', 'Has a path'], ['nopath', 'No path']]}
               colorFor={(v) => (v === 'warm' ? V('ok') : v === 'nopath' ? V('red') : undefined)}
             />
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search company, title, location…"
-              dir="auto"
-              style={{ ...inp(), width: 240, marginLeft: 'auto' }}
-            />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginLeft: 'auto' }}>
+              <span style={label}>
+                Search <span style={{ color: V('cyan') }}>{SEARCH_FIELDS.find(([k]) => k === field)?.[1]}</span>
+              </span>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <select
+                  value={field}
+                  onChange={(e) => setParam({ field: e.target.value === 'all' ? null : e.target.value })}
+                  style={{ ...inp(), padding: '7px 8px', fontSize: 12 }}
+                >
+                  {SEARCH_FIELDS.map(([k, l]) => <option key={k} value={k} style={{ color: '#000' }}>{l}</option>)}
+                </select>
+                <input
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder={field === 'all' ? 'company, title or location…' : `${SEARCH_FIELDS.find(([k]) => k === field)?.[1]}…`}
+                  dir="auto"
+                  style={{ ...inp(), width: 210 }}
+                />
+              </div>
+            </div>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
