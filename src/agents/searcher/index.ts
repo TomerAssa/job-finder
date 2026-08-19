@@ -44,18 +44,22 @@ function upsertPositions(
   positions: FoundPosition[],
   dedupByTitle = false,
 ): { added: number; product: number; seen: Set<number> } {
-  const stmt = db().prepare(
+  const insert = db().prepare(
     `INSERT INTO positions
        (company_id, title, location, url, source, description, is_product, discovered_at, last_seen_at)
-     VALUES (@company_id, @title, @location, @url, @source, @description, @is_product, @discovered_at, @discovered_at)
-     ON CONFLICT(company_id, title, url) DO UPDATE SET
-       last_seen_at = excluded.last_seen_at,
-       closed_at    = NULL`,
+     VALUES (@company_id, @title, @location, @url, @source, @description, @is_product, @discovered_at, @discovered_at)`,
   );
-  // The id of whatever the upsert touched, so the caller knows which postings
-  // were present this time and, by omission, which have disappeared.
+  // Matched the same way the unique index groups them: the table constraint
+  // includes `url`, and a NULL url makes every row distinct to SQLite, so the
+  // lookup — not the constraint — is what prevents a second copy.
   const findId = db().prepare(
-    `SELECT id FROM positions WHERE company_id = ? AND title = ? AND COALESCE(url,'') = COALESCE(?,'')`,
+    `SELECT id FROM positions
+      WHERE company_id = ? AND lower(trim(title)) = lower(trim(?)) AND COALESCE(url,'') = COALESCE(?,'')`,
+  );
+  const touch = db().prepare(
+    `UPDATE positions SET last_seen_at = ?, closed_at = NULL,
+            description = COALESCE(description, ?), location = COALESCE(location, ?)
+      WHERE id = ?`,
   );
   const titleExists = db().prepare(
     `SELECT 1 FROM positions WHERE company_id = ? AND lower(title) = lower(?) LIMIT 1`,
@@ -72,7 +76,15 @@ function upsertPositions(
       const title = p.title.trim();
       const url = p.url ?? null;
       const existed = findId.get(companyId, title, url) as { id: number } | undefined;
-      stmt.run({
+      if (existed) {
+        // Already known: record that it is still advertised, and fill in
+        // anything this source knows that the stored row does not.
+        touch.run(now(), p.description ?? null, p.location ?? null, existed.id);
+        seen.add(existed.id);
+        continue;
+      }
+
+      const info = insert.run({
         company_id: companyId,
         title,
         location: p.location ?? null,
@@ -82,12 +94,9 @@ function upsertPositions(
         is_product: isProduct,
         discovered_at: now(),
       });
-      const row = (existed ?? findId.get(companyId, title, url)) as { id: number } | undefined;
-      if (row) seen.add(row.id);
-      if (!existed) {
-        added++;
-        if (isProduct) product++;
-      }
+      seen.add(Number(info.lastInsertRowid));
+      added++;
+      if (isProduct) product++;
     }
   });
   tx(positions);
