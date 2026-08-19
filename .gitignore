@@ -37,3 +37,7 @@ design_handoff_job_console/
 
 # Playwright MCP scratch output
 .playwright-mcp/
+
+# A Claude skill that lives elsewhere, not part of this project
+skills/
+skills.zip
