@@ -1,11 +1,12 @@
 'use client';
 import { useState, useTransition } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import type { PersonListItem } from '@/lib/data/people';
 import type { IntroductionEdge, InteractionRow } from '@/lib/repo';
 import {
   addIntroductionToCompany, addIntroductionToNewPerson, addIntroductionToPerson,
-  deleteInteraction, logInteraction, removeIntroduction, setPersonCanGive,
+  deleteInteraction, deletePerson, logInteraction, mergePeople, removeIntroduction, setPersonCanGive,
   setPersonNotes, setPersonStatus, setPersonSummary,
 } from '@/lib/actions';
 import {
@@ -20,6 +21,7 @@ export function PersonProfile({
   similar,
   connectorNames,
   companies,
+  allPeople,
 }: {
   person: PersonListItem;
   introductions: { inbound: IntroductionEdge[]; outbound: IntroductionEdge[] };
@@ -27,6 +29,7 @@ export function PersonProfile({
   similar: { id: number; name: string }[];
   connectorNames: string[];
   companies: { id: number; name: string }[];
+  allPeople: MergeCandidate[];
 }) {
   const [, start] = useTransition();
   const p = person;
@@ -127,9 +130,197 @@ export function PersonProfile({
               ))}
             </div>
           </section>
+
+          <MergePerson personId={p.id} name={p.name} candidates={allPeople} />
+
+          <DeletePerson
+            personId={p.id}
+            name={p.name}
+            interactions={interactions.length}
+            edges={introductions.inbound.length + introductions.outbound.length}
+          />
         </div>
       </div>
     </>
+  );
+}
+
+export interface MergeCandidate {
+  id: number;
+  name: string;
+  company: string;
+  role: string;
+  interactions: number;
+}
+
+/**
+ * Fold another record into this one.
+ *
+ * The same person arrives as several rows when each source knew them
+ * differently — a first name here, a full name there, a phone on one and a
+ * LinkedIn URL on another. Automatic dedupe deliberately will not join those,
+ * because two people who share a name are not the same person; this is where you
+ * say that they are.
+ *
+ * Merging keeps THIS record and takes whatever the other one had that is
+ * missing here. Conversations and introductions move across rather than being
+ * lost, which is what makes this the right choice over deleting.
+ */
+function MergePerson({ personId, name, candidates }: { personId: number; name: string; candidates: MergeCandidate[] }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [picked, setPicked] = useState<MergeCandidate | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const matches = q.trim()
+    ? candidates.filter((c) => `${c.name} ${c.company}`.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 8)
+    : [];
+
+  const merge = async () => {
+    if (!picked) return;
+    setBusy(true);
+    await mergePeople(personId, [picked.id]);
+    setBusy(false);
+    setOpen(false);
+    setPicked(null);
+    setQ('');
+    router.refresh();
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        style={{ font: 'inherit', fontSize: 12, padding: '6px 12px', borderRadius: 8, cursor: 'pointer', background: 'transparent', color: V('muted'), border: `1px solid ${V('line')}`, justifySelf: 'start' }}
+      >
+        Merge another record into this one
+      </button>
+    );
+  }
+
+  return (
+    <section style={{ ...card, borderColor: V('cyan'), padding: '14px 16px' }}>
+      <div style={{ ...label, color: V('cyan') }}>Merge into {name}</div>
+
+      {picked ? (
+        <>
+          <p style={{ color: V('muted'), fontSize: 12.5, lineHeight: 1.6, margin: '8px 0 0' }}>
+            <b style={{ color: V('text') }} dir="auto">{picked.name}</b>
+            {picked.company ? ` (${picked.company})` : ''} will be folded into{' '}
+            <b style={{ color: V('text') }} dir="auto">{name}</b>. Anything missing here is
+            filled in from there
+            {picked.interactions > 0
+              ? `, and their ${picked.interactions} logged ${picked.interactions === 1 ? 'conversation' : 'conversations'} move across`
+              : ''}
+            . The other record is then removed.
+          </p>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <button style={primaryBtn(busy)} disabled={busy} onClick={merge}>
+              {busy ? 'merging…' : 'Merge'}
+            </button>
+            <button style={ghostBtn} onClick={() => setPicked(null)}>Pick someone else</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search the person to merge in…"
+            dir="auto"
+            style={{ ...inp(), width: '100%', marginTop: 10 }}
+          />
+          <div style={{ display: 'grid', gap: 4, marginTop: 8 }}>
+            {matches.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => setPicked(c)}
+                style={{ font: 'inherit', textAlign: 'left', display: 'flex', gap: 8, alignItems: 'baseline', padding: '7px 10px', borderRadius: 8, cursor: 'pointer', background: V('bg2'), border: `1px solid ${V('line')}`, color: V('text') }}
+              >
+                <span style={{ fontWeight: 600, fontSize: 13 }} dir="auto">{c.name}</span>
+                <span style={{ color: V('faint'), fontSize: 12 }} dir="auto">
+                  {[c.role, c.company].filter(Boolean).join(' · ') || 'no company'}
+                </span>
+                {c.interactions > 0 && (
+                  <span style={{ marginLeft: 'auto', ...label }}>{c.interactions} talks</span>
+                )}
+              </button>
+            ))}
+            {q.trim() && matches.length === 0 && (
+              <span style={{ color: V('faint'), fontSize: 12.5 }}>Nobody matches.</span>
+            )}
+          </div>
+          <button style={{ ...ghostBtn, marginTop: 10 }} onClick={() => { setOpen(false); setQ(''); }}>Cancel</button>
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Remove someone from the list.
+ *
+ * Name-only fragments accumulate from imports — the same person mentioned as
+ * "Derman", "דרמן" and "יואב דרמן" in different free-text fields becomes three
+ * rows that no automatic dedupe will merge, because the names genuinely differ.
+ *
+ * The confirmation names what goes with them rather than asking a generic
+ * "are you sure?": a stray fragment and someone you have spoken to three times
+ * both look like one row in a list, and only one of them is safe to delete.
+ */
+function DeletePerson({ personId, name, interactions, edges }: {
+  personId: number; name: string; interactions: number; edges: number;
+}) {
+  const router = useRouter();
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const losses = [
+    interactions > 0 ? `${interactions} logged ${interactions === 1 ? 'conversation' : 'conversations'}` : null,
+    edges > 0 ? `${edges} ${edges === 1 ? 'introduction' : 'introductions'}` : null,
+  ].filter(Boolean) as string[];
+
+  const remove = async () => {
+    setBusy(true);
+    await deletePerson(personId);
+    router.push('/people');
+  };
+
+  if (!confirming) {
+    return (
+      <button
+        onClick={() => setConfirming(true)}
+        style={{ font: 'inherit', fontSize: 12, padding: '6px 12px', borderRadius: 8, cursor: 'pointer', background: 'transparent', color: V('faint'), border: `1px solid ${V('line')}`, justifySelf: 'start' }}
+      >
+        Delete this person
+      </button>
+    );
+  }
+
+  return (
+    <section style={{ ...card, borderColor: V('red'), padding: '14px 16px' }}>
+      <div style={{ ...label, color: V('red') }}>Delete {name}?</div>
+      <p style={{ color: V('muted'), fontSize: 12.5, lineHeight: 1.6, margin: '8px 0 0' }}>
+        {losses.length
+          ? `This also deletes their ${losses.join(' and ')}. That cannot be undone.`
+          : 'They have no conversations or introductions recorded, so nothing else is lost.'}
+        {losses.length > 0 && (
+          <> If this is a duplicate of someone real, <Link href="/manage" style={{ color: V('cyan') }}>merge them instead</Link> to keep the history.</>
+        )}
+      </p>
+      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <button
+          onClick={remove}
+          disabled={busy}
+          style={{ font: 'inherit', fontSize: 13, fontWeight: 600, padding: '8px 14px', borderRadius: 8, cursor: 'pointer', background: V('red'), color: '#fff', border: 'none', opacity: busy ? 0.6 : 1 }}
+        >
+          {busy ? 'deleting…' : 'Delete'}
+        </button>
+        <button style={ghostBtn} onClick={() => setConfirming(false)}>Cancel</button>
+      </div>
+    </section>
   );
 }
 

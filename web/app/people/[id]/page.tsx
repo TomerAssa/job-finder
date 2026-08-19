@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getPersonListItem, connectorNames, companyOptions } from '@/lib/data/people';
+import { getPersonListItem, connectorNames, companyOptions, listPeople } from '@/lib/data/people';
 import { repo } from '@/lib/repo';
 import { PersonProfile } from './PersonProfile';
 
@@ -22,6 +22,15 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
       similar={r.similarPeople(personId).map((p) => ({ id: p.id, name: p.full_name }))}
       connectorNames={connectorNames()}
       companies={companyOptions()}
+      allPeople={listPeople()
+        .filter((x) => x.id !== personId)
+        .map((x) => ({
+          id: x.id,
+          name: x.name,
+          company: x.companyName,
+          role: x.role,
+          interactions: x.interactionCount,
+        }))}
     />
   );
 }

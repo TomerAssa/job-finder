@@ -1,9 +1,33 @@
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const projectRoot = resolve(__dirname, '..');
+
+/**
+ * Load `.env` from the project root, not from wherever the process happens to
+ * have been started.
+ *
+ * `dotenv/config` resolves relative to `process.cwd()`. That is the project root
+ * for the CLI, but `web/` for the Next.js server — which imports the agents
+ * directly — so the console silently ran with no API keys at all and reported
+ * them as unset. The bundled server can also resolve `import.meta.url` into
+ * `.next/`, so several candidates are tried and the first that exists wins.
+ */
+const ENV_CANDIDATES = [
+  process.env.JOB_ENV_FILE,
+  resolve(projectRoot, '.env'),
+  resolve(process.cwd(), '.env'),
+  resolve(process.cwd(), '..', '.env'),
+].filter((p): p is string => !!p);
+
+for (const path of ENV_CANDIDATES) {
+  if (!existsSync(path)) continue;
+  loadEnv({ path });
+  break;
+}
 
 export const paths = {
   root: projectRoot,

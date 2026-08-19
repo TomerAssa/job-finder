@@ -17,6 +17,20 @@ export class BrightDataAuthError extends Error {
   }
 }
 
+/**
+ * Transient zone failures. BrightData's SERP zone returns these intermittently
+ * for a query that succeeds on the next attempt — an unlucky proxy exit, a
+ * consent redirect, a page that rendered too slowly. Observed in the wild as
+ * "No ready cookies", "redirect location was rejected", and selector timeouts.
+ * Retrying is the correct response; reporting a hard failure is not.
+ */
+const TRANSIENT = /no ready cookies|redirect location was rejected|waiting for selector|timeout|temporarily|try again|502|503|504/i;
+
+export function isTransientError(err: unknown): boolean {
+  if (isAuthError(err)) return false;
+  return err instanceof Error && TRANSIENT.test(err.message);
+}
+
 /** True for an auth failure anywhere in a wrapped error chain. */
 export function isAuthError(err: unknown): boolean {
   return err instanceof BrightDataAuthError
