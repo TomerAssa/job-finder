@@ -62,6 +62,8 @@ export interface SearchHit {
   minYears: number | null;
   maxYears: number | null;
   paths: number;
+  dismissed: boolean;
+  closed: boolean;
 }
 
 export interface SearchPreview {
@@ -80,9 +82,22 @@ export interface SearchPreview {
    */
   missingYearsData: number;
   yearsFilterActive: boolean;
+  /** Matching roles hidden because you already dismissed them. */
+  dismissed: number;
+  /** Matching roles hidden because the posting has gone. */
+  closed: number;
 }
 
-export function previewSearch(params: SearchParams, limit = 200): SearchPreview {
+export interface PreviewOptions {
+  limit?: number;
+  /** Show roles already marked not-relevant or rejected. Off by default. */
+  includeDismissed?: boolean;
+  /** Show roles whose posting has disappeared. Off by default. */
+  includeClosed?: boolean;
+}
+
+export function previewSearch(params: SearchParams, opts: PreviewOptions = {}): SearchPreview {
+  const limit = opts.limit ?? 200;
   const handle = db();
   const hasSectors = params.sectors.length > 0;
   const placeholders = params.sectors.map(() => '?').join(',');
@@ -95,6 +110,7 @@ export function previewSearch(params: SearchParams, limit = 200): SearchPreview 
     .prepare(
       `SELECT p.id, p.company_id, c.name AS company_name, COALESCE(c.sector,'') AS sector,
               p.title, p.url, r.seniority, r.min_years, r.max_years, r.is_israel,
+              p.closed_at, t.status AS tracked_status, t.relevant AS tracked_relevant,
               COALESCE(r.normalized_location, p.location) AS loc,
               (
                 (SELECT COUNT(*) FROM people pe WHERE pe.works_company_id = p.company_id)
@@ -104,6 +120,7 @@ export function previewSearch(params: SearchParams, limit = 200): SearchPreview 
          FROM positions p
          JOIN companies c ON c.id = p.company_id
          LEFT JOIN position_requirements r ON r.position_id = p.id
+         LEFT JOIN role_tracking t ON t.position_id = p.id
         WHERE ${scopeSql}
         ORDER BY paths DESC, c.name COLLATE NOCASE`,
     )
@@ -113,8 +130,25 @@ export function previewSearch(params: SearchParams, limit = 200): SearchPreview 
   const yearsFilterActive = params.minYears != null || params.maxYears != null;
   const hits: SearchHit[] = [];
   let missingYearsData = 0;
+  let dismissed = 0;
+  let closed = 0;
+
   for (const r of rows) {
     if (!matchesTitle(r.title, matcher)) continue;
+
+    // Counted before the location and experience filters so the totals describe
+    // roles that would otherwise have matched — a role excluded for being in
+    // London is not something the user "already dismissed".
+    const isDismissed = r.tracked_status === 'rejected' || r.tracked_relevant === 'no';
+    const isClosed = r.closed_at != null;
+    if (isDismissed) {
+      dismissed++;
+      if (!opts.includeDismissed) continue;
+    }
+    if (isClosed) {
+      closed++;
+      if (!opts.includeClosed) continue;
+    }
     if (!yearsOverlap({ minYears: r.min_years ?? null, maxYears: r.max_years ?? null }, params)) continue;
     if (!matchesLocation({ location: r.loc ?? null, isIsrael: r.is_israel ?? null }, params.location)) continue;
     if (yearsFilterActive && r.min_years == null && r.max_years == null) missingYearsData++;
@@ -130,6 +164,8 @@ export function previewSearch(params: SearchParams, limit = 200): SearchPreview 
       minYears: r.min_years ?? null,
       maxYears: r.max_years ?? null,
       paths: r.paths ?? 0,
+      dismissed: isDismissed,
+      closed: isClosed,
     });
     if (hits.length >= limit) break;
   }
@@ -146,5 +182,5 @@ export function previewSearch(params: SearchParams, limit = 200): SearchPreview 
       .get(...params.sectors) as { c: number }
   ).c;
 
-  return { hits, uncrawled, companiesInScope, missingYearsData, yearsFilterActive };
+  return { hits, uncrawled, companiesInScope, missingYearsData, yearsFilterActive, dismissed, closed };
 }

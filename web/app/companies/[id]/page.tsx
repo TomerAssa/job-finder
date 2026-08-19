@@ -7,8 +7,14 @@ import { CompanyView } from './CompanyView';
 
 export const dynamic = 'force-dynamic';
 
-export default async function CompanyPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function CompanyPage({
+  params, searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ role?: string }>;
+}) {
   const { id } = await params;
+  const { role } = await searchParams;
   const companyId = Number(id);
   if (!Number.isInteger(companyId)) notFound();
 
@@ -19,6 +25,7 @@ export default async function CompanyPage({ params }: { params: Promise<{ id: st
     <CompanyView
       company={company}
       roles={rolesForCompany(companyId)}
+      focusRoleId={role ? Number(role) : null}
       people={peopleAtCompany(companyId)}
       candidates={candidatesForCompany(companyId)}
       connections={connectionsAtCompany(companyId)}

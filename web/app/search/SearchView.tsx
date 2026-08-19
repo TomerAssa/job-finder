@@ -301,7 +301,18 @@ function Crawl({ sectors, unvisited, due, fresh, budget, onDone }: {
 }
 
 function Results({ preview }: { preview: SearchPreview }) {
-  const { hits, missingYearsData, yearsFilterActive } = preview;
+  const { hits, missingYearsData, yearsFilterActive, dismissed, closed } = preview;
+  const router = useRouter();
+
+  /** Toggle a flag in the URL, so what is being shown stays linkable. */
+  const toggleParam = (key: string) => {
+    const q = new URLSearchParams(window.location.search);
+    if (q.get(key) === '1') q.delete(key);
+    else q.set(key, '1');
+    router.push(`/search?${q.toString()}`);
+  };
+  const showing = (key: string) =>
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get(key) === '1';
 
   return (
     <div style={{ marginTop: 22 }}>
@@ -313,6 +324,22 @@ function Results({ preview }: { preview: SearchPreview }) {
           track these in Jobs →
         </Link>
       </div>
+
+      {(dismissed > 0 || closed > 0) && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14, alignItems: 'center' }}>
+          <span style={{ ...label, color: V('faint') }}>hidden</span>
+          {dismissed > 0 && (
+            <button onClick={() => toggleParam('dismissed')} style={pill(showing('dismissed'), V('red'))}>
+              {dismissed} you dismissed
+            </button>
+          )}
+          {closed > 0 && (
+            <button onClick={() => toggleParam('closed')} style={pill(showing('closed'), V('faint'))}>
+              {closed} no longer posted
+            </button>
+          )}
+        </div>
+      )}
 
       {yearsFilterActive && missingYearsData > 0 && (
         <div style={{ ...card, borderColor: V('amber'), padding: '12px 16px', marginBottom: 14 }}>
@@ -339,7 +366,7 @@ function Results({ preview }: { preview: SearchPreview }) {
 function HitRow({ hit }: { hit: SearchHit }) {
   return (
     <div style={{ ...card, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-      <Link href={`/companies/${hit.companyId}`} style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0, textDecoration: 'none', color: V('text') }}>
+      <Link href={`/companies/${hit.companyId}?role=${hit.id}`} style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0, textDecoration: 'none', color: V('text') }}>
         <span style={{ width: 14, color: V('amber') }}>{hit.paths > 0 ? '★' : ''}</span>
         <b style={{ minWidth: 150 }} dir="auto">{hit.companyName}</b>
         <span style={{ flex: 1, minWidth: 0 }} dir="auto">{hit.title}</span>
@@ -349,6 +376,8 @@ function HitRow({ hit }: { hit: SearchHit }) {
           <span style={{ ...label, minWidth: 54 }}>{hit.minYears ?? '?'}–{hit.maxYears ?? '?'} yrs</span>
         )}
         <span style={{ ...label, minWidth: 90 }} dir="auto">{hit.location}</span>
+        {hit.dismissed && <span style={{ ...chip(V('red')), fontSize: 10.5 }}>dismissed</span>}
+        {hit.closed && <span style={{ ...chip(V('faint')), fontSize: 10.5 }}>gone</span>}
         <span style={chip(hit.paths > 0 ? V('ok') : V('red'))}>
           {hit.paths > 0 ? `${hit.paths} ${hit.paths === 1 ? 'path' : 'paths'}` : 'no path'}
         </span>

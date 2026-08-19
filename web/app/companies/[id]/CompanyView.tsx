@@ -12,10 +12,12 @@ import {
 } from '../../_components/ui';
 
 export function CompanyView({
-  company, roles, people, candidates, connections, introductions,
+  company, roles, people, candidates, connections, introductions, focusRoleId,
 }: {
   company: CompanyDetail;
   roles: RoleItem[];
+  /** The role that was clicked to get here; shown on its own, others collapsed. */
+  focusRoleId?: number | null;
   people: PersonListItem[];
   candidates: CandidateItem[];
   connections: CompanyConnection[];
@@ -48,35 +50,7 @@ export function CompanyView({
 
       <div style={{ display: 'grid', gap: 20 }}>
         {/* ── Roles ── */}
-        <section style={{ ...card, padding: '16px 18px' }}>
-          <div style={label}>Open roles &amp; my status</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
-            {roles.map((r) => (
-              <div key={r.id} style={{ border: `1px solid ${V('lineSoft')}`, borderRadius: 9, padding: '10px 12px' }}>
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <span dir="auto" style={{ flex: 1, fontWeight: 500, minWidth: 180 }}>{r.title}</span>
-                  <span style={senChip}>{r.seniority}</span>
-                  {r.url && <a href={r.url} target="_blank" rel="noreferrer" style={{ color: V('cyan') }}>job ↗</a>}
-                  <select
-                    defaultValue={r.status}
-                    onChange={(e) => start(() => { setRoleStatus(r.id, e.target.value); })}
-                    style={{ ...inp(), padding: '4px 8px', fontSize: 12, color: roleStatusMeta[r.status]?.color }}
-                  >
-                    {roleStatusOrder.map((s) => <option key={s} value={s} style={{ color: '#000' }}>{roleStatusMeta[s].label}</option>)}
-                  </select>
-                </div>
-                <textarea
-                  defaultValue={r.note}
-                  onBlur={(e) => { if (e.target.value !== r.note) start(() => { setRoleNote(r.id, e.target.value); }); }}
-                  placeholder="My status for this role…"
-                  dir="auto"
-                  style={{ ...inp(), width: '100%', marginTop: 8, minHeight: 42, resize: 'vertical', fontSize: 12.5 }}
-                />
-              </div>
-            ))}
-            {roles.length === 0 && <span style={{ color: V('faint') }}>No open roles tracked here.</span>}
-          </div>
-        </section>
+        <Roles roles={roles} focusRoleId={focusRoleId ?? null} />
 
         {/* ── People you already know ── */}
         <section style={{ ...card, padding: '16px 18px' }}>
@@ -120,6 +94,85 @@ export function CompanyView({
         <PeopleScan companyId={company.id} companyName={company.name} candidates={candidates} linkedinVerified={company.linkedinVerified} />
       </div>
     </>
+  );
+}
+
+/**
+ * The role you came here for, on its own.
+ *
+ * Arriving from a search result and being handed every opening at the company
+ * buries the one you clicked. That one is shown expanded; the rest stay behind a
+ * disclosure, because they are context rather than the answer.
+ */
+function Roles({ roles, focusRoleId }: { roles: RoleItem[]; focusRoleId: number | null }) {
+  const [showOthers, setShowOthers] = useState(false);
+  const focus = focusRoleId != null ? roles.find((r) => r.id === focusRoleId) ?? null : null;
+  const others = focus ? roles.filter((r) => r.id !== focus.id) : roles;
+
+  return (
+    <section style={{ ...card, padding: '16px 18px' }}>
+      <div style={label}>{focus ? 'The role you opened' : 'Open roles & my status'}</div>
+
+      {focus && (
+        <div style={{ marginTop: 12 }}>
+          <RoleCard role={focus} highlighted />
+        </div>
+      )}
+
+      {!focus && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
+          {roles.map((r) => <RoleCard key={r.id} role={r} />)}
+          {roles.length === 0 && <span style={{ color: V('faint') }}>No open roles tracked here.</span>}
+        </div>
+      )}
+
+      {focus && others.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <button
+            onClick={() => setShowOthers((v) => !v)}
+            style={{ ...ghostBtn, fontSize: 12.5, width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8 }}
+          >
+            <span style={{ color: V('faint') }}>{showOthers ? '▾' : '▸'}</span>
+            Other positions at {others.length === 1 ? 'this company' : `this company (${others.length})`}
+          </button>
+          {showOthers && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
+              {others.map((r) => <RoleCard key={r.id} role={r} />)}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RoleCard({ role: r, highlighted }: { role: RoleItem; highlighted?: boolean }) {
+  const [, start] = useTransition();
+  return (
+    <div style={{ border: `1px solid ${highlighted ? V('cyan') : V('lineSoft')}`, borderRadius: 9, padding: '10px 12px', background: highlighted ? V('panel2') : 'transparent' }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span dir="auto" style={{ flex: 1, fontWeight: highlighted ? 600 : 500, minWidth: 180 }}>{r.title}</span>
+        <span style={senChip}>{r.seniority}</span>
+        {(r.minYears != null || r.maxYears != null) && (
+          <span style={label}>{r.minYears ?? '?'}–{r.maxYears ?? '?'} yrs</span>
+        )}
+        {r.url && <a href={r.url} target="_blank" rel="noreferrer" style={{ color: V('cyan') }}>job ↗</a>}
+        <select
+          defaultValue={r.status}
+          onChange={(e) => start(() => { setRoleStatus(r.id, e.target.value); })}
+          style={{ ...inp(), padding: '4px 8px', fontSize: 12, color: roleStatusMeta[r.status]?.color }}
+        >
+          {roleStatusOrder.map((s) => <option key={s} value={s} style={{ color: '#000' }}>{roleStatusMeta[s].label}</option>)}
+        </select>
+      </div>
+      <textarea
+        defaultValue={r.note}
+        onBlur={(e) => { if (e.target.value !== r.note) start(() => { setRoleNote(r.id, e.target.value); }); }}
+        placeholder="My status for this role…"
+        dir="auto"
+        style={{ ...inp(), width: '100%', marginTop: 8, minHeight: 42, resize: 'vertical', fontSize: 12.5 }}
+      />
+    </div>
   );
 }
 

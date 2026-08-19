@@ -31,41 +31,75 @@ function upsertPositions(
   source: string,
   positions: FoundPosition[],
   dedupByTitle = false,
-): { added: number; product: number } {
+): { added: number; product: number; seen: Set<number> } {
   const stmt = db().prepare(
-    `INSERT INTO positions (company_id, title, location, url, source, description, is_product, discovered_at)
-     VALUES (@company_id, @title, @location, @url, @source, @description, @is_product, @discovered_at)
-     ON CONFLICT(company_id, title, url) DO NOTHING`,
+    `INSERT INTO positions
+       (company_id, title, location, url, source, description, is_product, discovered_at, last_seen_at)
+     VALUES (@company_id, @title, @location, @url, @source, @description, @is_product, @discovered_at, @discovered_at)
+     ON CONFLICT(company_id, title, url) DO UPDATE SET
+       last_seen_at = excluded.last_seen_at,
+       closed_at    = NULL`,
+  );
+  // The id of whatever the upsert touched, so the caller knows which postings
+  // were present this time and, by omission, which have disappeared.
+  const findId = db().prepare(
+    `SELECT id FROM positions WHERE company_id = ? AND title = ? AND COALESCE(url,'') = COALESCE(?,'')`,
   );
   const titleExists = db().prepare(
     `SELECT 1 FROM positions WHERE company_id = ? AND lower(title) = lower(?) LIMIT 1`,
   );
   let added = 0;
   let product = 0;
+  const seen = new Set<number>();
   const tx = db().transaction((items: FoundPosition[]) => {
     for (const p of items) {
       if (!p.title) continue;
       // Skip a role already captured from another source (cross-source de-dup).
       if (dedupByTitle && titleExists.get(companyId, p.title.trim())) continue;
       const isProduct = isProductManager(p.title) ? 1 : 0;
-      const info = stmt.run({
+      const title = p.title.trim();
+      const url = p.url ?? null;
+      const existed = findId.get(companyId, title, url) as { id: number } | undefined;
+      stmt.run({
         company_id: companyId,
-        title: p.title.trim(),
+        title,
         location: p.location ?? null,
-        url: p.url ?? null,
+        url,
         source,
         description: p.description ?? null,
         is_product: isProduct,
         discovered_at: now(),
       });
-      if (info.changes > 0) {
+      const row = (existed ?? findId.get(companyId, title, url)) as { id: number } | undefined;
+      if (row) seen.add(row.id);
+      if (!existed) {
         added++;
         if (isProduct) product++;
       }
     }
   });
   tx(positions);
-  return { added, product };
+  return { added, product, seen };
+}
+
+/**
+ * Mark the postings a company no longer advertises as closed.
+ *
+ * Only ever called when the scrape actually returned something. An empty result
+ * usually means the page moved or failed to parse, and treating that as "every
+ * role here is gone" would wipe out a company's listings on one bad fetch.
+ */
+function closeVanishedPositions(companyId: number, seen: Set<number>): number {
+  if (seen.size === 0) return 0;
+  const ids = [...seen];
+  const info = db()
+    .prepare(
+      `UPDATE positions SET closed_at = ?
+        WHERE company_id = ? AND closed_at IS NULL
+          AND id NOT IN (${ids.map(() => '?').join(',')})`,
+    )
+    .run(now(), companyId, ...ids);
+  return info.changes;
 }
 
 async function processCompany(company: CompanyRow, force: boolean): Promise<string> {
@@ -113,6 +147,7 @@ async function processCompany(company: CompanyRow, force: boolean): Promise<stri
     let product = 0;
     let source = 'none';
     let needsLlm = false;
+    const seen = new Set<number>();
     if (careersUrl) {
       const result = await extractPositions({ careersUrl, atsType: atsType as any, token, websiteUrl });
       found = result.positions.length;
@@ -121,6 +156,7 @@ async function processCompany(company: CompanyRow, force: boolean): Promise<stri
       const up = upsertPositions(company.id, source, result.positions);
       added = up.added;
       product = up.product;
+      for (const id of up.seen) seen.add(id);
     }
 
     // LinkedIn Jobs safety net: PM roles in Israel — reaches companies whose own
@@ -133,17 +169,21 @@ async function processCompany(company: CompanyRow, force: boolean): Promise<stri
         liProduct = up2.product;
         product += up2.product;
         found += up2.added;
+        for (const id of up2.seen) seen.add(id);
       }
     } catch {
       /* LinkedIn is optional */
     }
 
+    const closed = closeVanishedPositions(company.id, seen);
+
     db().prepare(`UPDATE companies SET needs_llm = ? WHERE id = ?`).run(needsLlm ? 1 : 0, company.id);
     await markFresh(company.id, config.checkTtlDays);
-    finishLog(logId, 'ok', { careersUrl, atsType, source, found, added, product, liProduct, needsLlm });
+    finishLog(logId, 'ok', { careersUrl, atsType, source, found, added, product, liProduct, needsLlm, closed });
     if (!careersUrl && found === 0) return `? ${company.name}: no careers page found`;
     const tag = product ? '★' : found ? '✓' : '·';
-    return `${tag} ${company.name}: ${found} roles, ${product} PM${liProduct ? ` (${liProduct} via LinkedIn)` : ''} via ${source}${needsLlm ? ' [needs-llm]' : ''}`;
+    return `${tag} ${company.name}: ${found} roles, ${product} PM${liProduct ? ` (${liProduct} via LinkedIn)` : ''}` +
+      `${closed ? `, ${closed} closed` : ''} via ${source}${needsLlm ? ' [needs-llm]' : ''}`;
   } catch (err) {
     // Credentials are wrong: let the run abort rather than recording this
     // company as an error it could recover from on a retry.

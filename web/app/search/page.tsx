@@ -46,7 +46,10 @@ export default async function SearchPage({
     <SearchView
       sectors={sectorOptions()}
       params={params}
-      preview={submitted ? previewSearch(params) : null}
+      preview={submitted ? previewSearch(params, {
+        includeDismissed: sp.dismissed === '1',
+        includeClosed: sp.closed === '1',
+      }) : null}
     />
   );
 }
