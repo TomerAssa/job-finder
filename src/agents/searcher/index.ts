@@ -10,6 +10,7 @@ import { resolveCareers } from './resolveCareers.js';
 import { extractPositions } from './extract.js';
 import { linkedinPmJobs } from './sources/linkedin.js';
 import { isProductManager } from '../../util/roles.js';
+import { isSameJob } from './sameJob.js';
 
 export interface SearchOpts {
   limit?: number;
@@ -42,27 +43,23 @@ function upsertPositions(
   companyId: number,
   source: string,
   positions: FoundPosition[],
-  dedupByTitle = false,
 ): { added: number; product: number; seen: Set<number> } {
   const insert = db().prepare(
     `INSERT INTO positions
        (company_id, title, location, url, source, description, is_product, discovered_at, last_seen_at)
      VALUES (@company_id, @title, @location, @url, @source, @description, @is_product, @discovered_at, @discovered_at)`,
   );
-  // Matched the same way the unique index groups them: the table constraint
-  // includes `url`, and a NULL url makes every row distinct to SQLite, so the
-  // lookup — not the constraint — is what prevents a second copy.
-  const findId = db().prepare(
-    `SELECT id FROM positions
-      WHERE company_id = ? AND lower(trim(title)) = lower(trim(?)) AND COALESCE(url,'') = COALESCE(?,'')`,
+  // Every row already stored for this company under the same title. The match
+  // cannot be done in SQL alone: whether two rows are one opening depends on the
+  // source and the posting id inside the URL (see sameJob.ts).
+  const siblings = db().prepare(
+    `SELECT id, title, url, source FROM positions
+      WHERE company_id = ? AND lower(trim(title)) = lower(trim(?))`,
   );
   const touch = db().prepare(
     `UPDATE positions SET last_seen_at = ?, closed_at = NULL,
             description = COALESCE(description, ?), location = COALESCE(location, ?)
       WHERE id = ?`,
-  );
-  const titleExists = db().prepare(
-    `SELECT 1 FROM positions WHERE company_id = ? AND lower(title) = lower(?) LIMIT 1`,
   );
   let added = 0;
   let product = 0;
@@ -70,12 +67,11 @@ function upsertPositions(
   const tx = db().transaction((items: FoundPosition[]) => {
     for (const p of items) {
       if (!p.title) continue;
-      // Skip a role already captured from another source (cross-source de-dup).
-      if (dedupByTitle && titleExists.get(companyId, p.title.trim())) continue;
       const isProduct = isProductManager(p.title) ? 1 : 0;
       const title = p.title.trim();
       const url = p.url ?? null;
-      const existed = findId.get(companyId, title, url) as { id: number } | undefined;
+      const candidates = siblings.all(companyId, title) as { id: number; title: string; url: string | null; source: string | null }[];
+      const existed = candidates.find((c) => isSameJob(c, { title, url, source }));
       if (existed) {
         // Already known: record that it is still advertised, and fill in
         // anything this source knows that the stored row does not.
@@ -186,7 +182,7 @@ async function processCompany(company: CompanyRow, force: boolean): Promise<stri
     try {
       const liJobs = await linkedinPmJobs(company.name);
       if (liJobs.length) {
-        const up2 = upsertPositions(company.id, 'linkedin', liJobs, true);
+        const up2 = upsertPositions(company.id, 'linkedin', liJobs);
         liProduct = up2.product;
         product += up2.product;
         found += up2.added;
