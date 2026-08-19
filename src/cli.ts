@@ -2,12 +2,14 @@
 import { existsSync } from 'node:fs';
 import { Command } from 'commander';
 import { paths } from './config.js';
-import { db } from './db/client.js';
+import { db, initDb } from './db/client.js';
 import { closeRedis } from './redis.js';
-import { ingestCompanies } from './ingest/companies.js';
 import { ingestConnections } from './ingest/connections.js';
+import { ingestCompanyList, listSectors } from './ingest/companyLists.js';
 import { ingestCv } from './ingest/cv.js';
 import { runSearcher, resetNoPmCompanies } from './agents/searcher/index.js';
+import { reclassifyPositions } from './agents/searcher/reclassify.js';
+import { startRun, getRun } from './agents/searcher/crawlRun.js';
 import { runHotApproach } from './agents/hotApproach/index.js';
 import { runRecruiter } from './agents/recruiter/index.js';
 import { runEnrich } from './agents/enrich/index.js';
@@ -16,9 +18,47 @@ import { findPeople } from './agents/people/index.js';
 import { exportNewPositions } from './agents/export/newXlsx.js';
 import { generateReports } from './report/generate.js';
 import { runDoctor } from './doctor.js';
+import { seedDemo, purgeDemo, demoStatus } from './demo/seed.js';
 
 const program = new Command();
 program.name('job').description('A league of agents that finds you a job.');
+
+// Every command needs a current schema, so migrations run before any of them.
+// `db()` throws if migrations are outstanding, which keeps a stale schema from
+// failing one query at a time somewhere deep in an agent.
+program.hook('preAction', async () => {
+  const applied = await initDb();
+  if (applied.length) console.log(`🗃️  Applied ${applied.length} migration(s): ${applied.join(', ')}`);
+});
+
+// ── migrate ──
+program
+  .command('migrate')
+  .description('Apply pending database migrations (runs automatically before every command).')
+  .action(() => {
+    console.log('✅ Database schema is up to date.');
+  });
+
+// ── demo ──
+program
+  .command('seed-demo')
+  .description('Fill an empty database with clearly-invented sample data.')
+  .option('--force', 'seed even though the database already holds real data', false)
+  .action((o) => {
+    db();
+    const r = seedDemo({ force: o.force });
+    console.log(`🌱 Demo data: ${r.companies} companies, ${r.positions} positions, ${r.people} people.`);
+    console.log('   Every row is flagged as demo. Finish setup, or run `npm run job purge-demo`, to clear it.');
+  });
+
+program
+  .command('purge-demo')
+  .description('Delete every demo row. Nothing real is touched.')
+  .action(() => {
+    db();
+    const r = purgeDemo();
+    console.log(`🧹 Removed ${r.people} people, ${r.positions} positions, ${r.companies} companies.`);
+  });
 
 // ── doctor ──
 program
@@ -36,8 +76,10 @@ program
   .action(async (o) => {
     db(); // ensure schema exists
     if (existsSync(o.companies)) {
-      const r = ingestCompanies(o.companies);
-      console.log(`🏢 Companies: +${r.inserted} new (${r.total} total)`);
+      // Routed through the list ingest so every company belongs to a named list;
+      // otherwise it exists but no sector search can ever reach it.
+      const r = ingestCompanyList(o.companies);
+      console.log(`🏢 ${r.list}: +${r.newCompanies} new companies (${r.companiesInFile} rows)`);
     } else console.warn(`⚠️  Companies CSV not found: ${o.companies}`);
 
     if (existsSync(o.connections)) {
@@ -51,13 +93,104 @@ program
     } else console.warn(`⚠️  CV PDF not found: ${o.cv} (needed for tailoring)`);
   });
 
+// ── ingest-list ──
+program
+  .command('ingest-list')
+  .description('Load a company-list CSV as a named, searchable sector.')
+  .argument('<files...>', 'one or more "Companies List …" CSV exports')
+  .option('--name <name>', 'override the list name (only valid with a single file)')
+  .action((files: string[], o) => {
+    db();
+    if (o.name && files.length > 1) throw new Error('--name only works with a single file');
+    for (const file of files) {
+      if (!existsSync(file)) { console.warn(`⚠️  Not found: ${file}`); continue; }
+      const r = ingestCompanyList(file, o.name);
+      console.log(`📋 ${r.list}: ${r.companiesInFile} rows · +${r.newCompanies} new companies · ${r.linked} linked`);
+    }
+    for (const s of listSectors()) {
+      console.log(
+        `   ${s.name.padEnd(34)} ${String(s.companies).padStart(4)} companies · ` +
+          `${String(s.visited).padStart(4)} visited · ${s.withPositions} with roles`,
+      );
+    }
+  });
+
 // ── search ──
 program
   .command('search')
   .description('Find open positions for each company (SERP → careers/ATS → parse).')
   .option('--limit <n>', 'process at most N companies', (v) => parseInt(v, 10))
+  .option('--sector <names>', 'restrict to these company lists (comma-separated, or ids)')
   .option('--force', 'ignore freshness cache and re-check everything', false)
-  .action((o) => runSearcher({ limit: o.limit, force: o.force }));
+  .action((o) => {
+    let listIds: number[] | undefined;
+    if (o.sector) {
+      const wanted = String(o.sector).split(',').map((s: string) => s.trim()).filter(Boolean);
+      const all = listSectors();
+      listIds = wanted.map((w: string) => {
+        const byId = Number(w);
+        const hit = all.find((l) => l.id === byId || l.name.toLowerCase() === w.toLowerCase());
+        if (!hit) {
+          throw new Error(`No company list called "${w}". Known: ${all.map((l) => l.name).join(', ')}`);
+        }
+        return hit.id;
+      });
+      const scope = all.filter((l) => listIds!.includes(l.id));
+      console.log(`🔎 Scope: ${scope.map((l) => `${l.name} (${l.companies})`).join(', ')}`);
+    }
+    return runSearcher({ limit: o.limit, force: o.force, listIds }).then(() => undefined);
+  });
+
+// ── crawl (long background-style run, also usable headless) ──
+program
+  .command('crawl')
+  .description('Run a long search over one or more sectors, reporting progress.')
+  .requiredOption('--sector <names>', 'comma-separated company lists')
+  .option('--companies <n>', 'stop after this many companies', (v) => parseInt(v, 10))
+  .option('--credits <n>', 'stop once this many credits are spent', (v) => parseInt(v, 10))
+  .option('--force', 're-check even recently-checked companies', false)
+  .action(async (o) => {
+    db();
+    const all = listSectors();
+    const ids = String(o.sector).split(',').map((w: string) => {
+      const hit = all.find((l) => l.name.toLowerCase() === w.trim().toLowerCase() || String(l.id) === w.trim());
+      if (!hit) throw new Error(`No company list called "${w.trim()}"`);
+      return hit.id;
+    });
+    const run = startRun({
+      sectors: ids,
+      targetCompanies: o.companies ?? null,
+      creditLimit: o.credits ?? null,
+      force: o.force,
+    });
+    console.log(`▶ run ${run.id}: up to ${run.companies_total} companies`);
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const r = getRun(run.id)!;
+      console.log(
+        `   ${r.status} ${r.companies_done}/${r.companies_total} · +${r.roles_added} roles · ` +
+          `+${r.positions_added} positions · ${r.credits_used} credits`,
+      );
+      if (r.status !== 'running') break;
+    }
+  });
+
+// ── reclassify ──
+program
+  .command('reclassify')
+  .description('Re-apply the target-role rules to positions already scraped.')
+  .option('--titles <list>', 'comma-separated title keywords (default: the product-manager profile)')
+  .option('--dry-run', 'report what would change without writing', false)
+  .action((o) => {
+    db();
+    const matcher = o.titles
+      ? { include: String(o.titles).split(',').map((t: string) => t.trim()).filter(Boolean) }
+      : undefined;
+    const r = reclassifyPositions(matcher as never, { dryRun: o.dryRun });
+    console.log(`${o.dryRun ? '🔍 Would change' : '✅ Reclassified'} ${r.scanned} positions: +${r.added} / -${r.removed} → ${r.nowMatching} matching`);
+    if (r.addedExamples.length) console.log(`   now matching: ${r.addedExamples.join(' · ')}`);
+    if (r.removedExamples.length) console.log(`   dropped:      ${r.removedExamples.join(' · ')}`);
+  });
 
 // ── export-new (xlsx of newly scraped Israel PM roles) ──
 program
@@ -73,14 +206,30 @@ program
 // ── people (finder for a single company; used by the web "Expand on employees") ──
 program
   .command('people')
-  .description('Find PM peers + HR/recruiters in Israel for a company via LinkedIn.')
+  .description('Find people worth talking to at a company (product, HR, engineering, founders).')
   .requiredOption('--company <id>', 'company id', (v) => parseInt(v, 10))
+  .option('--roles <keys>', 'comma-separated presets: product,hr,engineering,founders', 'product,hr')
+  .option('--titles <list>', 'comma-separated extra job titles to search for')
+  .option('--location <hint>', 'region hint, e.g. \'israel OR "tel aviv"\'')
+  .option('--skip-verification', 'do not check the company LinkedIn page first', false)
   .option('--json', 'print result as JSON', false)
   .action(async (o) => {
     db();
-    const found = await findPeople(o.company);
-    if (o.json) process.stdout.write(JSON.stringify(found));
-    else console.log(`Found ${found.length} people for company ${o.company}`);
+    const result = await findPeople(o.company, {
+      roleKeys: String(o.roles).split(',').map((s: string) => s.trim()).filter(Boolean),
+      customTitles: o.titles ? String(o.titles).split(',') : [],
+      location: o.location ?? null,
+      skipVerification: o.skipVerification,
+    });
+    if (o.json) {
+      process.stdout.write(JSON.stringify(result));
+      return;
+    }
+    if (result.verification) {
+      console.log(`${result.verification.verified ? '✅' : '⚠️ '} ${result.verification.reason}`);
+    }
+    for (const f of result.partialFailures) console.warn(`⚠️  ${f}`);
+    console.log(`Found ${result.candidates.length} candidates to review for company ${o.company}`);
   });
 
 // ── import-tracker ──
@@ -147,7 +296,7 @@ program
   .option('--limit <n>', 'limit companies searched / positions tailored', (v) => parseInt(v, 10))
   .action(async (o) => {
     db();
-    if (existsSync(paths.companiesCsv)) console.log(`🏢 Companies: +${ingestCompanies(paths.companiesCsv).inserted} new`);
+    if (existsSync(paths.companiesCsv)) console.log(`🏢 Companies: +${ingestCompanyList(paths.companiesCsv).newCompanies} new`);
     if (existsSync(paths.connectionsCsv)) console.log(`👥 Connections: +${ingestConnections(paths.connectionsCsv).inserted} new`);
     if (existsSync(paths.cvPdf)) await ingestCv(paths.cvPdf);
     await runSearcher({ limit: o.limit });

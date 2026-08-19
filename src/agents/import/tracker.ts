@@ -5,8 +5,9 @@ import { db, now } from '../../db/client.js';
 import { similarity } from '../../util/normalize.js';
 import { extract } from '../../llm/provider.js';
 import {
-  upsertEntity, findEntityByName, setEntityKind, ensureCompany, matchCompany,
-} from '../../db/entities.js';
+  upsertPerson, findPersonByName, addIntroduction, logInteraction,
+} from '../../db/people.js';
+import { ensureCompany } from '../../db/companies.js';
 
 type Row = Record<string, any>;
 
@@ -32,38 +33,46 @@ function importLeads(path: string): { people: number; edges: number } {
   for (const r of rows) {
     const name = str(r[P.name]);
     if (!name) continue;
+
+    // מעגל is the user's own hop count. `people.circle` is derived from the
+    // introduction graph now, so the sheet's value is kept as a note rather than
+    // silently overriding what the edges say.
     const degRaw = str(r[P.circle]);
-    const degree = Number.isFinite(parseFloat(degRaw)) ? Math.round(parseFloat(degRaw)) : null;
-    upsertEntity({
+    const { id } = upsertPerson({
       full_name: name,
-      kind: 'connection',
-      degree,
       company: str(r[P.company]) || null,
-      talked_status: str(r[P.talked]) || null,
-      conclusions: str(r[P.concl]) || null,
+      summary: str(r[P.concl]) || null,          // מסקנות
       relevant: str(r[P.relevant]).toLowerCase() || null,
-      source: 'import',
-      notes: [degRaw && degree == null ? `circle: ${degRaw}` : '', str(r[P.follow])].filter(Boolean).join(' | ') || null,
+      origin: 'tracker_import',
+      notes: [degRaw ? `circle (from tracker): ${degRaw}` : '', str(r[P.follow])]
+        .filter(Boolean).join(' | ') || null,
     });
     people++;
+
+    // דיברנו recorded that a conversation happened. That is history, so it goes
+    // in the log rather than on the person.
+    const talked = str(r[P.talked]);
+    if (talked) logInteraction({ personId: id, channel: 'other', outcome: talked });
+
     const ledBy = str(r[P.ledBy]);
     if (ledBy) ledByPairs.push({ from: name, ledBy });
   }
 
-  // Second pass: resolve "who led me to them" → led_me_to edges (person or source).
+  // Second pass, once every name in the sheet exists: "who led me to them".
+  // Note the direction — the sheet's ledBy is the introducer, so it becomes
+  // `from`, and the row's own person becomes `to`.
   let edges = 0;
-  const insEdge = db().prepare(
-    `INSERT INTO relationships (from_entity_id, relation, to_entity_id, to_company_id, source_label, note, created_at)
-     VALUES (?, 'led_me_to', ?, NULL, ?, NULL, ?)
-     ON CONFLICT(from_entity_id, relation, to_entity_id, to_company_id, source_label) DO NOTHING`,
-  );
   for (const { from, ledBy } of ledByPairs) {
-    const fromId = findEntityByName(from);
-    if (!fromId) continue;
-    const viaId = findEntityByName(ledBy);
-    const info = insEdge.run(fromId, viaId ?? null, viaId ? null : ledBy, now());
-    if (info.changes > 0) edges++;
-    if (viaId) setEntityKind(viaId, 'connector'); // they led someone → connector
+    const reachedId = findPersonByName(from);
+    if (!reachedId) continue;
+    const introducerId = findPersonByName(ledBy);
+    if (introducerId === reachedId) continue;
+    const created = addIntroduction({
+      fromPersonId: introducerId,
+      sourceLabel: introducerId ? null : ledBy, // a community or family member
+      toPersonId: reachedId,
+    });
+    if (created != null) edges++;
   }
   return { people, edges };
 }
@@ -144,7 +153,7 @@ async function importPositions(path: string): Promise<{ tracked: number; paths: 
        applied_status=excluded.applied_status, messaged=excluded.messaged, updated_at=excluded.updated_at`,
   );
   const outStmt = handle.prepare(
-    `INSERT INTO outreach (position_id, company_id, connector_entity_id, contact_entity_id, channel, status, note, added_at)
+    `INSERT INTO outreach (position_id, company_id, connector_person_id, contact_person_id, channel, status, note, added_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
@@ -171,13 +180,18 @@ async function importPositions(path: string): Promise<{ tracked: number; paths: 
     const paths = await parsePaths(r);
     for (const p of paths ?? []) {
       const connectorId = p.connector
-        ? upsertEntity({ full_name: p.connector, kind: 'connector', source: 'import' })
+        ? upsertPerson({ full_name: p.connector, origin: 'tracker_import' }).id
         : null;
+      // contact_detail is either a phone or a profile URL depending on the row;
+      // upsertPerson normalizes each and ignores the one that doesn't apply.
       const contactId = p.contact
-        ? upsertEntity({
-            full_name: p.contact, kind: 'employee', company, source: 'import',
-            contact_detail: p.contact_detail ?? null,
-          })
+        ? upsertPerson({
+            full_name: p.contact,
+            company,
+            phone: p.contact_detail ?? null,
+            linkedin_url: p.contact_detail ?? null,
+            origin: 'tracker_import',
+          }).id
         : null;
       if (!connectorId && !contactId && !p.status) continue;
       outStmt.run(
@@ -185,6 +199,13 @@ async function importPositions(path: string): Promise<{ tracked: number; paths: 
         p.relevant === false ? 'not_relevant' : 'contacted', p.status ?? null, now(),
       );
       pathCount++;
+
+      // A connector who got you to a contact at a company is an introduction —
+      // that pairing was the only thing the old import recovered, and it was
+      // dropped on the floor.
+      if (connectorId && contactId && connectorId !== contactId) {
+        addIntroduction({ fromPersonId: connectorId, toPersonId: contactId });
+      }
     }
   }
   return { tracked, paths: pathCount };

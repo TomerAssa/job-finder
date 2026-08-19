@@ -1,15 +1,41 @@
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const projectRoot = resolve(__dirname, '..');
 
+/**
+ * Load `.env` from the project root, not from wherever the process happens to
+ * have been started.
+ *
+ * `dotenv/config` resolves relative to `process.cwd()`. That is the project root
+ * for the CLI, but `web/` for the Next.js server — which imports the agents
+ * directly — so the console silently ran with no API keys at all and reported
+ * them as unset. The bundled server can also resolve `import.meta.url` into
+ * `.next/`, so several candidates are tried and the first that exists wins.
+ */
+const ENV_CANDIDATES = [
+  process.env.JOB_ENV_FILE,
+  resolve(projectRoot, '.env'),
+  resolve(process.cwd(), '.env'),
+  resolve(process.cwd(), '..', '.env'),
+].filter((p): p is string => !!p);
+
+for (const path of ENV_CANDIDATES) {
+  if (!existsSync(path)) continue;
+  loadEnv({ path });
+  break;
+}
+
 export const paths = {
   root: projectRoot,
   inputDir: resolve(projectRoot, 'data/input'),
   outputDir: resolve(projectRoot, 'data/output'),
-  db: resolve(projectRoot, 'data/output/job.db'),
+  // JOB_DB points both the CLI and the web app at the same file; without it they
+  // would silently disagree, since web/lib/db.ts has always honoured it.
+  db: process.env.JOB_DB ? resolve(process.cwd(), process.env.JOB_DB) : resolve(projectRoot, 'data/output/job.db'),
   tailoredDir: resolve(projectRoot, 'data/output/tailored-cvs'),
   // Default input filenames (override via CLI flags)
   companiesCsv: resolve(projectRoot, 'data/input/startup-finder.csv'),

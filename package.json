@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "description": "A league of agents that finds you a job: searcher, hot-approach, and recruiter.",
+  "//workspaces": "The web console imports the agents and the shared people layer directly, so both halves resolve from one node_modules and `npm install` at the root is the only setup step.",
+  "workspaces": [
+    "web"
+  ],
   "bin": {
     "job": "src/cli.ts"
   },
@@ -15,10 +19,12 @@
     "tailor": "tsx src/cli.ts tailor",
     "report": "tsx src/cli.ts report",
     "all": "tsx src/cli.ts run-all",
+    "migrate": "tsx src/cli.ts migrate",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "better-sqlite3": "^11.8.1",
+    "better-sqlite3": "^13.0.3",
     "commander": "^13.1.0",
     "csv-parse": "^5.6.0",
     "dotenv": "^16.4.7",
@@ -35,7 +41,7 @@
     "openai": "^4.83.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.13.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"

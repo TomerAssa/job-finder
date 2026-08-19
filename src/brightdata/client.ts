@@ -4,6 +4,39 @@ import { redis } from '../redis.js';
 
 const ENDPOINT = 'https://api.brightdata.com/request';
 
+/**
+ * Credentials are wrong or expired. Distinct from a normal request failure
+ * because retrying, or carrying on with the next company, cannot help: every
+ * subsequent request will fail the same way.
+ */
+export class BrightDataAuthError extends Error {
+  readonly isAuthError = true;
+  constructor(message: string) {
+    super(message);
+    this.name = 'BrightDataAuthError';
+  }
+}
+
+/**
+ * Transient zone failures. BrightData's SERP zone returns these intermittently
+ * for a query that succeeds on the next attempt — an unlucky proxy exit, a
+ * consent redirect, a page that rendered too slowly. Observed in the wild as
+ * "No ready cookies", "redirect location was rejected", and selector timeouts.
+ * Retrying is the correct response; reporting a hard failure is not.
+ */
+const TRANSIENT = /no ready cookies|redirect location was rejected|waiting for selector|timeout|temporarily|try again|502|503|504/i;
+
+export function isTransientError(err: unknown): boolean {
+  if (isAuthError(err)) return false;
+  return err instanceof Error && TRANSIENT.test(err.message);
+}
+
+/** True for an auth failure anywhere in a wrapped error chain. */
+export function isAuthError(err: unknown): boolean {
+  return err instanceof BrightDataAuthError
+    || (err instanceof Error && /BrightData (401|403)|Token expired|auth failed/i.test(err.message));
+}
+
 function cacheKey(zone: string, url: string, render: boolean): string {
   return `bd:${zone}:${render ? 'r:' : ''}${createHash('sha1').update(url).digest('hex')}`;
 }
@@ -70,7 +103,13 @@ export async function brightDataRequest(
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`BrightData ${res.status} for ${url}: ${body.slice(0, 300)}`);
+    const message = `BrightData ${res.status} for ${url}: ${body.slice(0, 300)}`;
+    // An expired or wrong token fails identically for every request. Callers
+    // that treat a fetch failure as "nothing found" would otherwise mark
+    // thousands of companies checked without a single one having been checked,
+    // so this is flagged as fatal for them to abort on.
+    if (res.status === 401 || res.status === 403) throw new BrightDataAuthError(message);
+    throw new Error(message);
   }
 
   // BrightData returns HTTP 200 even when the proxy denies the request — the real

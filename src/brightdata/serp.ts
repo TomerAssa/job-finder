@@ -1,5 +1,5 @@
 import { config } from '../config.js';
-import { brightDataRequest } from './client.js';
+import { brightDataRequest, isTransientError } from './client.js';
 
 export interface SerpResult {
   title: string;
@@ -19,8 +19,30 @@ export function serpMode(): 'serp' | 'unlocker' {
   return !serpZone || serpZone === unlockerZone ? 'unlocker' : 'serp';
 }
 
-export async function serpSearch(query: string, num = 10): Promise<SerpResult[]> {
-  return serpMode() === 'unlocker' ? searchViaUnlocker(query, num) : searchViaSerpZone(query, num);
+/**
+ * Run a search, retrying the transient zone failures.
+ *
+ * The SERP zone intermittently rejects a query it will happily answer a moment
+ * later. Without this, a company that is perfectly findable fails its identity
+ * check on an unlucky proxy exit and every person found there gets marked
+ * unverified — a wrong answer caused by infrastructure, not by the data.
+ */
+export async function serpSearch(query: string, num = 10, attempts = 3): Promise<SerpResult[]> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return serpMode() === 'unlocker'
+        ? await searchViaUnlocker(query, num)
+        : await searchViaSerpZone(query, num);
+    } catch (err) {
+      lastError = err;
+      if (!isTransientError(err) || attempt === attempts) throw err;
+      // Short, growing pause: these clear in seconds, and the caller is usually
+      // in a queue that should not stall on one unlucky query.
+      await new Promise((r) => setTimeout(r, 400 * attempt));
+    }
+  }
+  throw lastError;
 }
 
 // ── Dedicated SERP API zone (Google, structured) ─────────────────────────────
