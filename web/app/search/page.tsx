@@ -19,7 +19,13 @@ function paramsFrom(sp: Record<string, string | string[] | undefined>): SearchPa
 
   return {
     ...DEFAULT_PARAMS,
-    sectors: (one('sectors') ?? '').split(',').map(Number).filter(Number.isInteger),
+    // Ids must be positive. `''.split(',')` yields [''], and Number('') is 0,
+    // which passes Number.isInteger — so an absent parameter used to parse as
+    // the list id 0 and scope every search to a sector that does not exist.
+    sectors: (one('sectors') ?? '')
+      .split(',')
+      .map((v) => Number(v.trim()))
+      .filter((n) => Number.isInteger(n) && n > 0),
     titleKeywords: (one('titles') ?? '').split(',').map((s) => s.trim()).filter(Boolean),
     minYears: num('minYears'),
     maxYears: num('maxYears'),

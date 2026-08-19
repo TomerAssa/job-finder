@@ -44,7 +44,9 @@ export function parseParams(json: string): SearchParams {
     return {
       ...DEFAULT_PARAMS,
       ...raw,
-      sectors: Array.isArray(raw.sectors) ? raw.sectors.map(Number).filter(Number.isInteger) : [],
+      sectors: Array.isArray(raw.sectors)
+        ? raw.sectors.map(Number).filter((n) => Number.isInteger(n) && n > 0)
+        : [],
       titleKeywords: Array.isArray(raw.titleKeywords) ? raw.titleKeywords.filter(Boolean) : [],
     };
   } catch {

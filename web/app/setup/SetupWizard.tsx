@@ -8,10 +8,10 @@ import { V, card, chip, ErrorNote, ghostBtn, label, PageHead, primaryBtn } from 
 /**
  * First-run setup.
  *
- * Every step is a check plus the command that satisfies it, rather than a button
- * that does the work invisibly: the steps that matter — importing your contacts,
- * crawling companies — read private files and spend credits, and both are worth
- * running deliberately from a terminal you control.
+ * The two import steps name a terminal command because they read files off your
+ * disk, which a browser cannot do for you. Everything after that — searching,
+ * scanning a company, reading listings for experience and location — runs from
+ * the app.
  */
 export function SetupWizard({ status }: { status: SetupStatus }) {
   const router = useRouter();
@@ -133,9 +133,9 @@ export function SetupWizard({ status }: { status: SetupStatus }) {
             </P>
           ) : (
             <P>
-              Crawl the careers pages of a sector:{' '}
-              <Code>npm run job search --sector &quot;&lt;name&gt;&quot;</Code>. Costs roughly two to
-              four credits per company, so start with <Code>--limit 20</Code> to see how it goes.
+              Go to <Link href="/search" style={{ color: V('cyan') }}>Search</Link>, pick a
+              sector and run a batch. It shows the credit estimate before you commit and what
+              it actually cost afterwards, so start small.
             </P>
           )}
         </Step>

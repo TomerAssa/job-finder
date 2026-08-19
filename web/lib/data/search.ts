@@ -16,7 +16,10 @@ export interface SectorOption {
   id: number;
   name: string;
   companies: number;
-  crawled: number;
+  /** Companies the crawler has been to. */
+  visited: number;
+  /** Companies it has never been to — what a new search can still reach. */
+  unvisited: number;
 }
 
 export function sectorOptions(): SectorOption[] {
@@ -24,10 +27,12 @@ export function sectorOptions(): SectorOption[] {
     .prepare(
       `SELECT l.id, l.name,
               COUNT(m.company_id) AS companies,
-              SUM(CASE WHEN c.status = 'checked' THEN 1 ELSE 0 END) AS crawled
+              SUM(CASE WHEN c.status = 'checked' THEN 1 ELSE 0 END) AS visited,
+              SUM(CASE WHEN c.status = 'checked' THEN 0 ELSE 1 END) AS unvisited
          FROM company_lists l
          LEFT JOIN company_list_members m ON m.list_id = l.id
          LEFT JOIN companies c ON c.id = m.company_id
+        WHERE COALESCE(l.source_file,'') != 'demo'
         GROUP BY l.id
         ORDER BY l.name COLLATE NOCASE`,
     )
