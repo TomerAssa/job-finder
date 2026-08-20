@@ -267,6 +267,31 @@ export async function resetNoPmCompanies(): Promise<number> {
   return info.changes;
 }
 
+/** Why a run selected no companies. The cause decides what the user should do. */
+function explainEmptySelection(opts: SearchOpts, params: number[]): string {
+  if (opts.limit != null && Number(opts.limit) <= 0) {
+    return 'Nothing to search: the limit was 0. Raise --limit to actually visit anything.';
+  }
+
+  const scope = opts.listIds?.length
+    ? `WHERE id IN (SELECT company_id FROM company_list_members WHERE list_id IN (${opts.listIds.map(() => '?').join(',')}))`
+    : '';
+  const inScope = (
+    db().prepare(`SELECT COUNT(*) c FROM companies ${scope}`).get(...params) as { c: number }
+  ).c;
+
+  if (inScope === 0) {
+    return opts.listIds?.length
+      ? 'Nothing to search: that company list has no companies in it.'
+      : 'Nothing to search: no companies loaded yet. Add a company list first.';
+  }
+
+  return (
+    `Nothing to search: all ${inScope} companies in scope were checked within the last ` +
+    `${config.checkTtlDays} days. Pass --force to re-check them anyway.`
+  );
+}
+
 /** Run the searcher over pending/eligible companies with bounded concurrency. */
 export async function runSearcher(opts: SearchOpts = {}): Promise<SearchRunResult> {
   requireBrightData();
@@ -303,14 +328,16 @@ export async function runSearcher(opts: SearchOpts = {}): Promise<SearchRunResul
     .all(...params) as CompanyRow[];
 
   if (companies.length === 0) {
-    console.log(
-      `Nothing to search: every company in scope was checked within the last ` +
-        `${config.checkTtlDays} days. Pass --force to re-check them anyway.`,
-    );
+    // Selecting nothing has several quite different causes, and telling the user
+    // the wrong one sends them looking in the wrong place: "everything was
+    // checked recently" is actively misleading when they asked for zero
+    // companies, or when the scope is empty to begin with.
+    console.log(explainEmptySelection(opts, params));
     return { processed: 0, skipped: 0 };
   }
 
-  console.log(`🔎 Searching ${companies.length} companies (concurrency ${config.searchConcurrency})…`);
+  const n = companies.length;
+  console.log(`🔎 Searching ${n} ${n === 1 ? 'company' : 'companies'} (concurrency ${config.searchConcurrency})…`);
   const queue = new PQueue({ concurrency: config.searchConcurrency });
 
   // An expired token fails every request identically. Without this the run would
