@@ -61,7 +61,8 @@ export function SearchView({
     if (titles.trim()) q.set('titles', titles);
     if (minYears.trim()) q.set('minYears', minYears);
     if (maxYears.trim()) q.set('maxYears', maxYears);
-    if (location.trim()) q.set('location', location);
+    // Always sent: an empty value is a real choice ('anywhere'), not an absence.
+    q.set('location', location.trim());
     q.set('go', '1');
     router.push(`/search?${q.toString()}`);
   };

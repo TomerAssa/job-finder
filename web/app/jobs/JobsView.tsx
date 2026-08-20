@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { RoleItem } from '@/lib/data/jobs';
 import { setRoleStatus } from '@/lib/actions';
+import { matchesLocation } from '../../../src/util/location.js';
 import {
   V, cap, card, chip, Empty, FilterGroup, inp, label, PageHead, roleStatusMeta,
   roleStatusOrder, Segmented, senChip,
@@ -33,6 +34,7 @@ export function JobsView({ roles: initial }: { roles: RoleItem[] }) {
   const statusF = params.get('status') ?? 'relevant';
   const senF = params.get('sen') ?? 'all';
   const pathF = params.get('path') ?? 'all';
+  const placeF = params.get('place') ?? 'all';
   const field = (params.get('field') ?? 'all') as SearchField;
   const q = params.get('q') ?? '';
 
@@ -70,6 +72,10 @@ export function JobsView({ roles: initial }: { roles: RoleItem[] }) {
     if (senF !== 'all' && r.seniority !== senF) return false;
     if (pathF === 'warm' && r.paths === 0) return false;
     if (pathF === 'nopath' && r.paths > 0) return false;
+    // The list query only drops roles enrichment has judged to be elsewhere.
+    // Roles it has not read yet could be anywhere, so they are separable here.
+    if (placeF === 'israel' && !matchesLocation({ location: r.location, isIsrael: r.isIsrael }, 'Israel')) return false;
+    if (placeF === 'unknown' && r.isIsrael !== null) return false;
     if (q.trim()) {
       const needle = q.trim().toLowerCase();
       const hay =
@@ -107,6 +113,13 @@ export function JobsView({ roles: initial }: { roles: RoleItem[] }) {
               value={senF}
               onChange={(v) => setParam({ sen: v === 'all' ? null : v })}
               options={[['all', 'All'], ...seniorities.map((s) => [s, cap(s)] as [string, string])]}
+            />
+            <FilterGroup
+              title="Where"
+              value={placeF}
+              onChange={(v) => setParam({ place: v === 'all' ? null : v })}
+              options={[['all', 'All'], ['israel', 'Israel'], ['unknown', 'Not checked yet']]}
+              colorFor={(v) => (v === 'israel' ? V('ok') : v === 'unknown' ? V('amber') : undefined)}
             />
             <FilterGroup
               title="Path"

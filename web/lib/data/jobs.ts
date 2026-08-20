@@ -23,6 +23,8 @@ export interface RoleItem {
   maxYears: number | null;
   /** People + connections + introductions that reach this company. */
   paths: number;
+  /** From enrichment: 1 in Israel, 0 elsewhere, null not yet determined. */
+  isIsrael: number | null;
 }
 
 const roleStatus = (r: Record<string, any>): string => {
@@ -35,7 +37,7 @@ const roleStatus = (r: Record<string, any>): string => {
 
 const ROLE_SQL = `
   SELECT p.id, p.company_id, c.name AS company_name, p.title, p.url,
-         r.seniority, r.min_years, r.max_years,
+         r.seniority, r.min_years, r.max_years, r.is_israel,
          COALESCE(r.normalized_location, p.location) AS loc,
          t.status AS tstatus, t.relevant, t.applied_status AS note,
          (SELECT COUNT(*) FROM outreach o
@@ -64,6 +66,7 @@ const toRole = (r: Record<string, any>): RoleItem => ({
   minYears: r.min_years ?? null,
   maxYears: r.max_years ?? null,
   paths: r.paths ?? 0,
+  isIsrael: r.is_israel ?? null,
 });
 
 /**
