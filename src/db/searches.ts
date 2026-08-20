@@ -6,6 +6,7 @@
  * re-runnable set of parameters instead.
  */
 import { db, now } from './client.js';
+import { config } from '../config.js';
 
 export interface SearchParams {
   /** company_lists ids. Required: a search is always over a defined universe. */
@@ -33,7 +34,8 @@ export const DEFAULT_PARAMS: SearchParams = {
   titleKeywords: [],
   minYears: null,
   maxYears: null,
-  location: 'Israel',
+  // Where you are looking, from DEFAULT_LOCATION. Empty means anywhere.
+  location: config.defaultLocation || null,
   includeOpenWeb: false,
 };
 

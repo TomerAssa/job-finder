@@ -29,11 +29,10 @@ function paramsFrom(sp: Record<string, string | string[] | undefined>): SearchPa
     titleKeywords: (one('titles') ?? '').split(',').map((s) => s.trim()).filter(Boolean),
     minYears: num('minYears'),
     maxYears: num('maxYears'),
-    // Absent means "not chosen yet", so the default applies. Present but empty
-    // means the user cleared it deliberately, which must switch the filter off —
-    // collapsing the two is why a bare /search silently searched everywhere
-    // while the box showed "Israel" as a placeholder.
-    location: sp.location === undefined ? DEFAULT_PARAMS.location : one('location'),
+    // Where you are looking is a standing preference, not something to re-enter
+    // each time: an empty box falls back to DEFAULT_LOCATION rather than
+    // quietly widening the search to the whole world.
+    location: one('location') ?? DEFAULT_PARAMS.location,
   };
 }
 

@@ -90,6 +90,12 @@ export const config = {
   // Use the LLM (Gemini) to parse careers pages that have no structured data.
   searchUseLlm: (process.env.SEARCH_USE_LLM ?? 'true').toLowerCase() !== 'false',
   checkTtlDays: num('CHECK_TTL_DAYS', 7),
+  /**
+   * Where you are looking for work. Used as the search default, and to drop
+   * postings whose stated location is somewhere else before they are stored.
+   * Set it empty to keep everything, wherever it is.
+   */
+  defaultLocation: (process.env.DEFAULT_LOCATION ?? 'Israel').trim(),
   searchConcurrency: num('SEARCH_CONCURRENCY', 4),
   responseCacheHours: num('RESPONSE_CACHE_HOURS', 72),
 };

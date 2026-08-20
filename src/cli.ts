@@ -1,7 +1,7 @@
 #!/usr/bin/env -S npx tsx
 import { existsSync } from 'node:fs';
 import { Command } from 'commander';
-import { paths } from './config.js';
+import { paths, config } from './config.js';
 import { db, initDb } from './db/client.js';
 import { closeRedis } from './redis.js';
 import { ingestConnections } from './ingest/connections.js';
@@ -184,6 +184,37 @@ program
       );
       if (r.status !== 'running') break;
     }
+  });
+
+// ── prune ──
+program
+  .command('prune')
+  .description('Delete stored positions that enrichment placed outside your search area.')
+  .option('--dry-run', 'report what would go without deleting', false)
+  .action((o) => {
+    const handle = db();
+    const where = `id IN (SELECT position_id FROM position_requirements WHERE is_israel = 0)`;
+    const count = (sql: string) => (handle.prepare(sql).get() as { c: number }).c;
+
+    const total = count(`SELECT COUNT(*) c FROM positions WHERE ${where}`);
+    const tracked = count(
+      `SELECT COUNT(*) c FROM role_tracking WHERE position_id IN (SELECT id FROM positions WHERE ${where})`,
+    );
+    const reached = count(
+      `SELECT COUNT(*) c FROM outreach WHERE position_id IN (SELECT id FROM positions WHERE ${where})`,
+    );
+
+    if (!config.defaultLocation) {
+      console.log('No DEFAULT_LOCATION set, so nothing counts as outside your search area.');
+      return;
+    }
+    console.log(`${o.dryRun ? '🔍 Would delete' : '🧹 Deleting'} ${total} positions outside ${config.defaultLocation}` +
+      `${tracked ? `, ${tracked} carrying a status` : ''}${reached ? `, ${reached} with outreach recorded` : ''}.`);
+    if (o.dryRun) return;
+
+    const info = handle.prepare(`DELETE FROM positions WHERE ${where}`).run();
+    console.log(`   removed ${info.changes}. Re-crawls will not bring them back: postings that ` +
+      `state a location outside ${config.defaultLocation} are no longer stored.`);
   });
 
 // ── reclassify ──

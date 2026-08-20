@@ -11,6 +11,7 @@ import { extractPositions } from './extract.js';
 import { linkedinPmJobs } from './sources/linkedin.js';
 import { isProductManager } from '../../util/roles.js';
 import { isSameJob } from './sameJob.js';
+import { matchesLocation } from '../../util/location.js';
 
 export interface SearchOpts {
   limit?: number;
@@ -93,6 +94,17 @@ function upsertPositions(
     for (const p of items) {
       if (!p.title) continue;
       const isProduct = isProductManager(p.title) ? 1 : 0;
+      // Drop a posting that says where it is and says somewhere else. A posting
+      // with no stated location is kept: absence is not evidence, and the
+      // enrichment pass reads the full text later and can still rule on it.
+      if (
+        config.defaultLocation &&
+        p.location &&
+        !matchesLocation({ location: p.location, isIsrael: null }, config.defaultLocation)
+      ) {
+        continue;
+      }
+
       const title = p.title.trim();
       const url = positionUrl(p.url, careersUrl);
       const candidates = siblings.all(companyId, title) as { id: number; title: string; url: string | null; source: string | null }[];
