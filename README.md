@@ -1,11 +1,11 @@
-# Job Agent League
+# Job Finder
 
 A local-first job search that runs on your machine. It crawls the careers pages
 of companies you choose, and models your network as a graph of introductions, so
 you can see which openings you have a way into.
 
-Your contacts, your notes and your CV stay on your disk. Nothing is uploaded
-unless you point it at a hosted LLM.
+Your contacts, your notes and your conversations stay on your disk. Nothing is
+uploaded unless you point it at a hosted LLM.
 
 > Personal side project and portfolio piece. It works, and it is not production
 > software.
@@ -22,8 +22,12 @@ introduction is an edge. Someone led you to someone, who led you to a company.
 The tool tracks those chains, works out how many hops each person is from you,
 and shows which openings sit at companies you already have a path into.
 
-It does not write your CV, send messages for you, or invent a connection it
-cannot show you the evidence for.
+**Keeps a record of who you spoke to.** Every conversation is dated, with what
+you asked and what came of it, so a search that runs for months does not depend
+on remembering.
+
+It does not write or tailor your CV, send messages for you, or invent a
+connection it cannot show you the evidence for.
 
 ## Setup
 
@@ -61,13 +65,16 @@ Put these in `data/input/` — all of it is gitignored:
 |---|---|---|
 | a company list CSV | The companies to search | Startup Nation Central, or any CSV with a name column |
 | `Connections.csv` | Your LinkedIn connections | LinkedIn → Settings → Data Privacy → Get a copy of your data |
-| `cv.pdf` | Your CV | any text-based PDF |
+
+Both are optional and both can be dropped straight onto the setup page instead —
+searching works with neither. Connections are what turn a list of jobs into a
+list of jobs you have a way into.
 
 ## Use
 
 ```bash
 npm run job ingest-list "data/input/My Sector.csv"   # load a sector
-npm run ingest                                       # connections + CV
+npm run ingest                                       # LinkedIn connections
 npm run job search --sector "My Sector" --limit 20   # crawl (costs credits)
 npm run enrich                                       # read years, skills, location
 npm run connect                                      # cross connections with companies
@@ -113,7 +120,7 @@ Worth knowing before changing anything:
 `docs/GOAL.md` covers what this is for; `docs/SPEC.md` covers how each piece works.
 
 ```
-src/agents/     searcher · enrich · people · hotApproach · import · recruiter
+src/agents/     searcher · enrich · people · hotApproach · import
 src/db/         schema, migrations, and the shared people layer
 src/brightdata/ one proxy endpoint, Redis-cached and budget-capped
 web/            the Next.js console over the same database

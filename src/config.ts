@@ -36,11 +36,9 @@ export const paths = {
   // JOB_DB points both the CLI and the web app at the same file; without it they
   // would silently disagree, since web/lib/db.ts has always honoured it.
   db: process.env.JOB_DB ? resolve(process.cwd(), process.env.JOB_DB) : resolve(projectRoot, 'data/output/job.db'),
-  tailoredDir: resolve(projectRoot, 'data/output/tailored-cvs'),
   // Default input filenames (override via CLI flags)
   companiesCsv: resolve(projectRoot, 'data/input/startup-finder.csv'),
   connectionsCsv: resolve(projectRoot, 'data/input/Connections.csv'),
-  cvPdf: resolve(projectRoot, 'data/input/cv.pdf'),
   // Optional hand-maintained spreadsheets of leads/positions.
   // Point these at your own files via env vars, or drop them in data/input.
   leadsXlsx: process.env.LEADS_XLSX ?? resolve(projectRoot, 'data/input/leads.xlsx'),

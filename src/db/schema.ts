@@ -146,7 +146,7 @@ CREATE INDEX IF NOT EXISTS idx_outreach_contact ON outreach(contact_entity_id);
 
 CREATE TABLE IF NOT EXISTS check_log (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  agent         TEXT NOT NULL,                 -- searcher|connect|recruiter
+  agent         TEXT NOT NULL,                 -- searcher|connect|enrich|people
   company_id    INTEGER REFERENCES companies(id) ON DELETE SET NULL,
   started_at    TEXT NOT NULL,
   finished_at   TEXT,

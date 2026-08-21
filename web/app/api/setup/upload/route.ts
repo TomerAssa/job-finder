@@ -76,17 +76,6 @@ export async function POST(req: Request) {
       });
     }
 
-    if (kind === 'cv') {
-      if (!/\.pdf$/i.test(safeName)) {
-        return NextResponse.json({ error: 'The CV should be a text-based PDF' }, { status: 400 });
-      }
-      writeFileSync(paths.cvPdf, bytes);
-      // Deliberately not parsed here: nothing in the product reads the CV today.
-      return NextResponse.json({
-        kind,
-        summary: `Saved to ${paths.cvPdf.replace(paths.root + '/', '')}`,
-      });
-    }
 
     return NextResponse.json({ error: `Unknown upload kind "${kind}"` }, { status: 400 });
   } catch (err) {

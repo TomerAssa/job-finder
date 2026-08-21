@@ -6,12 +6,10 @@ import { db, initDb } from './db/client.js';
 import { closeRedis } from './redis.js';
 import { ingestConnections } from './ingest/connections.js';
 import { ingestCompanyList, listSectors } from './ingest/companyLists.js';
-import { ingestCv } from './ingest/cv.js';
 import { runSearcher, resetNoPmCompanies } from './agents/searcher/index.js';
 import { reclassifyPositions } from './agents/searcher/reclassify.js';
 import { startRun, getRun } from './agents/searcher/crawlRun.js';
 import { runHotApproach } from './agents/hotApproach/index.js';
-import { runRecruiter } from './agents/recruiter/index.js';
 import { runEnrich } from './agents/enrich/index.js';
 import { runImportTracker } from './agents/import/tracker.js';
 import { findPeople } from './agents/people/index.js';
@@ -94,10 +92,9 @@ program
 // ── ingest ──
 program
   .command('ingest')
-  .description('Load companies CSV, connections CSV, and CV PDF into the database.')
+  .description('Load a companies CSV and your LinkedIn connections into the database.')
   .option('--companies <path>', 'Israel Startup Finder export', paths.companiesCsv)
   .option('--connections <path>', 'LinkedIn Connections.csv', paths.connectionsCsv)
-  .option('--cv <path>', 'CV PDF', paths.cvPdf)
   .action(async (o) => {
     db(); // ensure schema exists
     if (existsSync(o.companies)) {
@@ -111,11 +108,6 @@ program
       const r = ingestConnections(o.connections);
       console.log(`👥 Connections: +${r.inserted} new (${r.total} total)`);
     } else console.warn(`⚠️  Connections CSV not found: ${o.connections} (skip warm intros for now)`);
-
-    if (existsSync(o.cv)) {
-      const r = await ingestCv(o.cv);
-      console.log(`📄 CV: extracted ${r.chars} chars → ${r.cachePath}`);
-    } else console.warn(`⚠️  CV PDF not found: ${o.cv} (needed for tailoring)`);
   });
 
 // ── ingest-list ──
@@ -316,15 +308,6 @@ program
   .option('--limit <n>', '2nd-degree: companies to list', (v) => parseInt(v, 10))
   .action((o) => runHotApproach({ secondDegree: o.secondDegree, limit: o.limit }));
 
-// ── tailor ──
-program
-  .command('tailor')
-  .description('Tailor your CV to shortlisted positions (or all with --all).')
-  .option('--all', 'tailor for every position, not just shortlisted', false)
-  .option('--limit <n>', 'tailor at most N positions', (v) => parseInt(v, 10))
-  .option('--force', 'overwrite existing tailored CVs', false)
-  .action((o) => runRecruiter({ all: o.all, limit: o.limit, force: o.force }));
-
 // ── report ──
 program
   .command('report')
@@ -334,13 +317,12 @@ program
 // ── run-all ──
 program
   .command('run-all')
-  .description('ingest → search → connect → tailor → report')
-  .option('--limit <n>', 'limit companies searched / positions tailored', (v) => parseInt(v, 10))
+  .description('ingest → search → enrich → connect → report')
+  .option('--limit <n>', 'limit companies searched', (v) => parseInt(v, 10))
   .action(async (o) => {
     db();
     if (existsSync(paths.companiesCsv)) console.log(`🏢 Companies: +${ingestCompanyList(paths.companiesCsv).newCompanies} new`);
     if (existsSync(paths.connectionsCsv)) console.log(`👥 Connections: +${ingestConnections(paths.connectionsCsv).inserted} new`);
-    if (existsSync(paths.cvPdf)) await ingestCv(paths.cvPdf);
     await runSearcher({ limit: o.limit });
     await runEnrich({ limit: o.limit });
     await runHotApproach({});

@@ -18,8 +18,8 @@ own API keys in exchange for their contact data never leaving their machine.
 
 ## Principles
 
-- **Local-first.** SQLite on your disk. Your CV, your contacts, and your notes never
-  leave the machine unless you opt into a hosted LLM provider. Nothing personal is
+- **Local-first.** SQLite on your disk. Your contacts, your notes and your
+  conversations never leave the machine unless you opt into a hosted LLM provider. Nothing personal is
   ever committed to the repo.
 - **The graph is the product.** Positions are commodity data; who you know and who
   they can reach is not. Every feature either enriches that graph or acts on it.

@@ -18,7 +18,7 @@ contradicts `SPEC.md`, the spec may be out of date — flag it and propose the e
 | Path | What |
 |---|---|
 | `src/cli.ts` | The CLI entry point; every agent is reachable from here |
-| `src/agents/` | searcher (careers/ATS discovery + extraction), enrich, hotApproach, people, import, recruiter |
+| `src/agents/` | searcher (careers/ATS discovery + extraction), enrich, hotApproach, people, import |
 | `src/db/` | SQLite schema, migrations, and the identity/people layer |
 | `src/brightdata/` | Web Unlocker + SERP through one proxy endpoint; Redis-cached, monthly-capped |
 | `src/llm/provider.ts` | gemini / ollama / anthropic / openai behind one interface |
@@ -43,7 +43,7 @@ contradicts `SPEC.md`, the spec may be out of date — flag it and propose the e
 ## Commands
 
 ```bash
-npm run ingest     # load companies, connections, CV
+npm run ingest     # load companies and LinkedIn connections
 npm run search     # crawl careers pages for open positions
 npm run connect    # match 1st-degree connections to target companies
 npm run report     # regenerate markdown + CSV reports

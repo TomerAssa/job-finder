@@ -1,9 +1,9 @@
 {
-  "name": "job-agent-league",
+  "name": "job-finder",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A league of agents that finds you a job: searcher, hot-approach, and recruiter.",
+  "description": "A local-first job search: crawls careers pages, and maps who can introduce you.",
   "//workspaces": "The web console imports the agents and the shared people layer directly, so both halves resolve from one node_modules and `npm install` at the root is the only setup step.",
   "workspaces": [
     "web"
