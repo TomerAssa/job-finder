@@ -1,7 +1,9 @@
 import { notFound } from 'next/navigation';
 import {
   candidatesForCompany, connectionsAtCompany, getCompany, introductionsIntoCompany, peopleAtCompany,
+  pathsForCompany,
 } from '@/lib/data/companies';
+import { allPersonNames, connectorNames } from '@/lib/data/people';
 import { rolesForCompany } from '@/lib/data/jobs';
 import { CompanyView } from './CompanyView';
 
@@ -30,6 +32,9 @@ export default async function CompanyPage({
       candidates={candidatesForCompany(companyId)}
       connections={connectionsAtCompany(companyId)}
       introductions={introductionsIntoCompany(companyId)}
+      paths={pathsForCompany(companyId)}
+      knownPeople={allPersonNames()}
+      connectors={connectorNames()}
     />
   );
 }

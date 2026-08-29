@@ -2,17 +2,17 @@
 import { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import type { CandidateItem, CompanyConnection, CompanyDetail } from '@/lib/data/companies';
+import type { CandidateItem, CompanyConnection, CompanyDetail, RolePath } from '@/lib/data/companies';
 import type { RoleItem } from '@/lib/data/jobs';
 import type { PersonListItem } from '@/lib/data/people';
-import { decideCandidate, promoteConnections, setRoleNote, setRoleStatus } from '@/lib/actions';
+import { addRolePath, decideCandidate, promoteConnections, removeRolePath, setRoleNote, setRoleStatus } from '@/lib/actions';
 import {
   V, card, chip, circleBadge, ErrorNote, ghostBtn, initials, inp, label, pill,
   primaryBtn, roleStatusMeta, roleStatusOrder, senChip, StatusChip,
 } from '../../_components/ui';
 
 export function CompanyView({
-  company, roles, people, candidates, connections, introductions, focusRoleId,
+  company, roles, people, candidates, connections, introductions, focusRoleId, paths, knownPeople, connectors,
 }: {
   company: CompanyDetail;
   roles: RoleItem[];
@@ -22,6 +22,9 @@ export function CompanyView({
   candidates: CandidateItem[];
   connections: CompanyConnection[];
   introductions: { id: number; from: string; note: string }[];
+  paths: RolePath[];
+  knownPeople: string[];
+  connectors: string[];
 }) {
   const [, start] = useTransition();
   const meta = [company.sector, company.stage, company.employees, company.funding]
@@ -76,6 +79,14 @@ export function CompanyView({
             </div>
           )}
         </section>
+
+        <Paths
+          company={company}
+          roles={roles}
+          paths={paths}
+          knownPeople={knownPeople}
+          connectors={connectors}
+        />
 
         {/* ── LinkedIn connections at this company ── */}
         {connections.length > 0 && (
@@ -173,6 +184,165 @@ function RoleCard({ role: r, highlighted }: { role: RoleItem; highlighted?: bool
         style={{ ...inp(), width: '100%', marginTop: 8, minHeight: 42, resize: 'vertical', fontSize: 12.5 }}
       />
     </div>
+  );
+}
+
+const PATH_STATUS = ['todo', 'contacted', 'replied', 'submitted', 'connected', 'not_relevant', 'closed'];
+
+/**
+ * Ways in, per role.
+ *
+ * A path has two halves and either can be missing: the connector opens the door,
+ * the contact is the person inside. They are usually at different companies —
+ * someone you know at one place forwarding you to someone at another is the
+ * commonest way a job actually happens, and it is not expressible as "people who
+ * work here".
+ */
+function Paths({ company, roles, paths, knownPeople, connectors }: {
+  company: CompanyDetail;
+  roles: RoleItem[];
+  paths: RolePath[];
+  knownPeople: string[];
+  connectors: string[];
+}) {
+  const router = useRouter();
+  const [adding, setAdding] = useState(false);
+  const [roleId, setRoleId] = useState<number | ''>(roles[0]?.id ?? '');
+  const [connector, setConnector] = useState('');
+  const [contact, setContact] = useState('');
+  const [contactCompany, setContactCompany] = useState(company.name);
+  const [contactLinkedin, setContactLinkedin] = useState('');
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [, start] = useTransition();
+
+  const reset = () => {
+    setConnector(''); setContact(''); setContactCompany(company.name);
+    setContactLinkedin(''); setNote(''); setAdding(false); setError(null);
+  };
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    const res = await addRolePath({
+      roleId: Number(roleId),
+      companyId: company.id,
+      connectorName: connector,
+      contactName: contact,
+      contactCompany,
+      contactLinkedin,
+      note,
+    });
+    setBusy(false);
+    if (!res.ok) { setError(res.error); return; }
+    reset();
+    router.refresh();
+  };
+
+  return (
+    <section style={{ ...card, padding: '16px 18px' }}>
+      <datalist id="known-people">{knownPeople.map((n) => <option key={n} value={n} />)}</datalist>
+      <datalist id="known-connectors">{connectors.map((n) => <option key={n} value={n} />)}</datalist>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={label}>Ways in</div>
+        {!adding && (
+          <button style={{ ...primaryBtn(), marginLeft: 'auto', fontSize: 12, padding: '6px 12px' }} onClick={() => setAdding(true)}>
+            + Add a way in
+          </button>
+        )}
+      </div>
+
+      <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
+        {paths.length === 0 && !adding && (
+          <span style={{ color: V('faint'), fontSize: 13 }}>
+            Nobody recorded yet — a connector who can reach someone here, or a contact inside.
+          </span>
+        )}
+        {paths.map((p) => (
+          <div key={p.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderBottom: `1px solid ${V('lineSoft')}`, paddingBottom: 8 }}>
+            <span style={{ fontSize: 12.5, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+              {p.connectorName ? (
+                <Link href={`/people/${p.connectorId}`} style={{ color: V('cyan'), fontWeight: 600 }} dir="auto">{p.connectorName}</Link>
+              ) : (
+                <span style={{ color: V('faint') }}>cold</span>
+              )}
+              {p.connectorCompany && <span style={{ color: V('faint') }} dir="auto">({p.connectorCompany})</span>}
+              <span style={{ color: V('faint') }}>→</span>
+              {p.contactName ? (
+                <Link href={`/people/${p.contactId}`} style={{ color: V('text'), fontWeight: 600 }} dir="auto">{p.contactName}</Link>
+              ) : (
+                <span style={{ color: V('faint') }}>nobody inside yet</span>
+              )}
+            </span>
+            <span style={{ ...label, color: V('faint') }} dir="auto">{p.roleTitle}</span>
+            <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+              <span style={{ ...chip(p.status === 'connected' || p.status === 'submitted' ? V('ok') : V('faint')), fontSize: 10.5 }}>
+                {p.status.replace('_', ' ')}
+              </span>
+              <button
+                onClick={() => start(() => { removeRolePath(p.id, company.id); })}
+                style={{ font: 'inherit', fontSize: 11, background: 'transparent', border: 'none', color: V('faint'), cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </span>
+            {p.note && <div style={{ width: '100%', color: V('faint'), fontSize: 12 }} dir="auto">{p.note}</div>}
+          </div>
+        ))}
+      </div>
+
+      {adding && (
+        <div style={{ display: 'grid', gap: 10, marginTop: 14, padding: 14, background: V('bg2'), borderRadius: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <span style={label}>Who connects me</span>
+              <input list="known-connectors" value={connector} onChange={(e) => setConnector(e.target.value)}
+                placeholder="e.g. Tal — leave blank if cold" dir="auto" style={inp()} />
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <span style={label}>Who they reach here</span>
+              <input list="known-people" value={contact} onChange={(e) => setContact(e.target.value)}
+                placeholder="e.g. Shira" dir="auto" style={inp()} />
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <span style={label}>Where that person works</span>
+              <input value={contactCompany} onChange={(e) => setContactCompany(e.target.value)} dir="auto" style={inp()} />
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <span style={label}>Their LinkedIn (optional)</span>
+              <input value={contactLinkedin} onChange={(e) => setContactLinkedin(e.target.value)}
+                placeholder="https://www.linkedin.com/in/…" style={inp()} />
+            </div>
+          </div>
+          <div style={{ display: 'grid', gap: 6 }}>
+            <span style={label}>Which role</span>
+            <select value={roleId} onChange={(e) => setRoleId(e.target.value === '' ? '' : Number(e.target.value))} style={inp()}>
+              {roles.map((r) => <option key={r.id} value={r.id} style={{ color: '#000' }}>{r.title}</option>)}
+              {roles.length === 0 && <option value="">no roles tracked here yet</option>}
+            </select>
+          </div>
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="What happened — e.g. sent my CV on 12/8" dir="auto" style={inp()} />
+
+          <p style={{ color: V('faint'), fontSize: 11.5, lineHeight: 1.6, margin: 0 }}>
+            Naming both records the introduction in your people graph too, so it shows on each
+            of their profiles and can be reused for the next role here.
+          </p>
+
+          {error && <ErrorNote>{error}</ErrorNote>}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button style={primaryBtn(busy || (!connector.trim() && !contact.trim()))}
+              disabled={busy || (!connector.trim() && !contact.trim())} onClick={save}>
+              {busy ? 'saving…' : 'Save'}
+            </button>
+            <button style={ghostBtn} onClick={reset}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

@@ -246,6 +246,145 @@ export async function decideCandidate(candidateId: number, decision: 'kept' | 'r
 
 // ─── Roles ──────────────────────────────────────────────────────────────────
 
+/**
+ * Add a role the crawler will never find.
+ *
+ * Plenty of openings arrive by message, or sit on a page no extractor can read.
+ * The company is created if it is new, so a job at somewhere not in any list can
+ * still be tracked. Marked `manual`, which keeps a crawl from closing it: it is
+ * not on the careers page by definition, so its absence proves nothing.
+ */
+export async function addManualRole(input: {
+  company: string;
+  title: string;
+  url?: string;
+  location?: string;
+  note?: string;
+}): Promise<{ ok: true; roleId: number; companyId: number } | { ok: false; error: string }> {
+  const company = input.company.trim();
+  const title = input.title.trim();
+  if (!company || !title) return { ok: false, error: 'A company and a job title are both needed' };
+
+  try {
+    const r = repo();
+    const companyId = r.ensureCompany(company);
+    if (!companyId) return { ok: false, error: `Could not resolve a company called "${company}"` };
+
+    const handle = db();
+    const url = input.url?.trim() || null;
+
+    const existing = handle
+      .prepare(
+        `SELECT id FROM positions
+          WHERE company_id = ? AND lower(trim(title)) = lower(trim(?)) AND COALESCE(url,'') = COALESCE(?,'')`,
+      )
+      .get(companyId, title, url) as { id: number } | undefined;
+    if (existing) {
+      touch('/jobs', `/companies/${companyId}`);
+      return { ok: true, roleId: existing.id, companyId };
+    }
+
+    const now = new Date().toISOString();
+    const info = handle
+      .prepare(
+        `INSERT INTO positions
+           (company_id, title, location, url, source, description, is_product, discovered_at, last_seen_at)
+         VALUES (?, ?, ?, ?, 'manual', ?, 1, ?, ?)`,
+      )
+      .run(companyId, title, input.location?.trim() || null, url, input.note?.trim() || null, now, now);
+
+    touch('/jobs', `/companies/${companyId}`);
+    return { ok: true, roleId: Number(info.lastInsertRowid), companyId };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Record who can get you into a role.
+ *
+ * Two distinct parts, either of which may be missing: the connector is the
+ * person who opens the door, the contact is the person inside. They are usually
+ * at different companies — "Tal from Claroty sent my CV to Shira from
+ * SafeBreach" is a connector at one company reaching a contact at another.
+ *
+ * When both are present the introduction is also recorded in the people graph,
+ * so it shows on each of their profiles and the chain can be reused for the next
+ * role at that company rather than retyped.
+ */
+export async function addRolePath(input: {
+  roleId: number;
+  companyId: number;
+  connectorName?: string;
+  contactName?: string;
+  contactCompany?: string;
+  contactLinkedin?: string;
+  contactPhone?: string;
+  status?: string;
+  note?: string;
+}): Promise<{ ok: true; connectorId: number | null; contactId: number | null } | { ok: false; error: string }> {
+  const r = repo();
+  const connectorName = input.connectorName?.trim();
+  const contactName = input.contactName?.trim();
+  if (!connectorName && !contactName) {
+    return { ok: false, error: 'Name at least one person' };
+  }
+
+  try {
+    // A connector is someone already in your world, so reuse them if the name
+    // matches rather than creating a second copy.
+    const connectorId = connectorName
+      ? (r.findPersonByName(connectorName) ??
+         r.upsertPerson({ full_name: connectorName, origin: 'manual' }).id)
+      : null;
+
+    const contactId = contactName
+      ? r.upsertPerson({
+          full_name: contactName,
+          company: input.contactCompany?.trim() || null,
+          linkedin_url: input.contactLinkedin?.trim() || null,
+          phone: input.contactPhone?.trim() || null,
+          origin: 'manual',
+        }).id
+      : null;
+
+    if (connectorId && contactId && connectorId !== contactId) {
+      r.addIntroduction({ fromPersonId: connectorId, toPersonId: contactId, note: input.note?.trim() || null });
+    }
+
+    db()
+      .prepare(
+        `INSERT INTO outreach (position_id, company_id, connector_person_id, contact_person_id, status, note, added_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.roleId,
+        input.companyId,
+        connectorId,
+        contactId,
+        input.status ?? 'todo',
+        input.note?.trim() || null,
+        new Date().toISOString(),
+      );
+
+    touch('/jobs', `/companies/${input.companyId}`, '/people');
+    return { ok: true, connectorId, contactId };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function setPathStatus(outreachId: number, status: string, companyId: number) {
+  db().prepare('UPDATE outreach SET status = ?, contacted_at = ? WHERE id = ?')
+    .run(status, new Date().toISOString(), outreachId);
+  touch('/jobs', `/companies/${companyId}`);
+}
+
+export async function removeRolePath(outreachId: number, companyId: number) {
+  db().prepare('DELETE FROM outreach WHERE id = ?').run(outreachId);
+  touch('/jobs', `/companies/${companyId}`);
+}
+
 export async function setRoleStatus(roleId: number, status: string) {
   db()
     .prepare(

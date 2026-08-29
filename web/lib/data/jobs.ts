@@ -25,6 +25,8 @@ export interface RoleItem {
   paths: number;
   /** From enrichment: 1 in Israel, 0 elsewhere, null not yet determined. */
   isIsrael: number | null;
+  /** Typed in by hand rather than found by a crawl. */
+  isManual: boolean;
 }
 
 const roleStatus = (r: Record<string, any>): string => {
@@ -37,7 +39,7 @@ const roleStatus = (r: Record<string, any>): string => {
 
 const ROLE_SQL = `
   SELECT p.id, p.company_id, c.name AS company_name, p.title, p.url,
-         r.seniority, r.min_years, r.max_years, r.is_israel,
+         r.seniority, r.min_years, r.max_years, r.is_israel, p.source,
          COALESCE(r.normalized_location, p.location) AS loc,
          t.status AS tstatus, t.relevant, t.applied_status AS note,
          (SELECT COUNT(*) FROM outreach o
@@ -67,6 +69,7 @@ const toRole = (r: Record<string, any>): RoleItem => ({
   maxYears: r.max_years ?? null,
   paths: r.paths ?? 0,
   isIsrael: r.is_israel ?? null,
+  isManual: r.source === 'manual',
 });
 
 /**
@@ -79,7 +82,10 @@ export function listRoles(): RoleItem[] {
   return (
     db()
       .prepare(
-        `${ROLE_SQL} WHERE p.is_product = 1 AND (r.is_israel IS NULL OR r.is_israel = 1)
+        // A role typed in by hand always shows: the user decided it was worth
+        // tracking, which outranks any guess the title matcher would make.
+        `${ROLE_SQL} WHERE (p.is_product = 1 OR p.source = 'manual')
+           AND (r.is_israel IS NULL OR r.is_israel = 1)
          ORDER BY paths DESC, c.name COLLATE NOCASE, p.id`,
       )
       .all() as Record<string, any>[]

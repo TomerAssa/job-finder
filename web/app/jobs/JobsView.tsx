@@ -3,11 +3,11 @@ import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { RoleItem } from '@/lib/data/jobs';
-import { setRoleStatus } from '@/lib/actions';
+import { addManualRole, setRoleStatus } from '@/lib/actions';
 import { matchesLocation } from '../../../src/util/location.js';
 import {
-  V, cap, card, chip, Empty, FilterGroup, inp, label, PageHead, roleStatusMeta,
-  roleStatusOrder, Segmented, senChip,
+  V, cap, card, chip, Empty, ErrorNote, FilterGroup, ghostBtn, inp, label, PageHead,
+  primaryBtn, roleStatusMeta, roleStatusOrder, Segmented, senChip,
 } from '../_components/ui';
 
 /** Which field the text box matches. Shown, so it is never a guess. */
@@ -52,6 +52,7 @@ export function JobsView({ roles: initial }: { roles: RoleItem[] }) {
   );
 
   // Typing should not push a history entry per keystroke.
+  const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState(q);
   useEffect(() => setDraft(q), [q]);
   useEffect(() => {
@@ -94,9 +95,20 @@ export function JobsView({ roles: initial }: { roles: RoleItem[] }) {
     <>
       <PageHead
         title="Jobs & Companies"
-        sub={`${filtered.length} of ${roles.length} roles · ${companyCount} companies`}
-        right={<Segmented value={view} options={[['list', 'List'], ['board', 'Board']]} onChange={(v) => setParam({ view: v === 'board' ? 'board' : null })} />}
+        sub={
+          view === 'board'
+            ? `${roles.length} roles · ${new Set(roles.map((r) => r.companyId)).size} companies · all of them`
+            : `${filtered.length} of ${roles.length} roles · ${companyCount} companies`
+        }
+        right={
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <Segmented value={view} options={[['list', 'List'], ['board', 'Board']]} onChange={(v) => setParam({ view: v === 'board' ? 'board' : null })} />
+            <button style={primaryBtn()} onClick={() => setAdding((v) => !v)}>+ Add a role</button>
+          </div>
+        }
       />
+
+      {adding && <AddRole onDone={() => { setAdding(false); router.refresh(); }} onCancel={() => setAdding(false)} />}
 
       {view === 'list' && (
         <>
@@ -165,6 +177,7 @@ export function JobsView({ roles: initial }: { roles: RoleItem[] }) {
                     </span>
                   )}
                   <span style={{ ...label, minWidth: 96 }} dir="auto">{r.location}</span>
+                  {r.isManual && <span style={{ ...chip(V('violet')), fontSize: 10.5 }}>added by hand</span>}
                   <span style={chip(r.paths > 0 ? V('ok') : V('red'))}>
                     {r.paths > 0 ? `${r.paths} ${r.paths === 1 ? 'path' : 'paths'}` : 'no path'}
                   </span>
@@ -186,16 +199,84 @@ export function JobsView({ roles: initial }: { roles: RoleItem[] }) {
         </>
       )}
 
-      {view === 'board' && <Board roles={filtered} onDrop={changeStatus} />}
+      {/* The board is the whole pipeline at a glance, so it deliberately ignores
+          the list's filters — switching to it is a change of view, not a
+          narrowing of the same one. */}
+      {view === 'board' && <Board roles={roles} onDrop={changeStatus} />}
     </>
+  );
+}
+
+/**
+ * A role the crawler will never find.
+ *
+ * Openings arrive by message, or sit behind a page no extractor can read. The
+ * company is created if it is new, so a job somewhere outside every loaded list
+ * is still trackable — and it is marked manual, which keeps a later crawl of
+ * that company from closing something it was never going to see.
+ */
+function AddRole({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+  const [company, setCompany] = useState('');
+  const [title, setTitle] = useState('');
+  const [url, setUrl] = useState('');
+  const [location, setLocation] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    const res = await addManualRole({ company, title, url, location, note });
+    setBusy(false);
+    if (!res.ok) { setError(res.error); return; }
+    onDone();
+  };
+
+  return (
+    <section style={{ ...card, padding: 18, marginBottom: 18, display: 'grid', gap: 12, maxWidth: 760 }}>
+      <div style={label}>Add a role by hand</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 10 }}>
+        <div style={{ display: 'grid', gap: 6 }}>
+          <span style={label}>Company</span>
+          <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="New or existing" dir="auto" style={inp()} />
+        </div>
+        <div style={{ display: 'grid', gap: 6 }}>
+          <span style={label}>Job title</span>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} dir="auto" style={inp()} />
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 10 }}>
+        <div style={{ display: 'grid', gap: 6 }}>
+          <span style={label}>Link (optional)</span>
+          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" style={inp()} />
+        </div>
+        <div style={{ display: 'grid', gap: 6 }}>
+          <span style={label}>Location (optional)</span>
+          <input value={location} onChange={(e) => setLocation(e.target.value)} dir="auto" style={inp()} />
+        </div>
+      </div>
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Where it came from — e.g. Tal mentioned it" dir="auto" style={inp()} />
+      <p style={{ color: V('faint'), fontSize: 11.5, margin: 0, lineHeight: 1.6 }}>
+        A role added here is never closed by a crawl, and always appears in this list.
+      </p>
+      {error && <ErrorNote>{error}</ErrorNote>}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button style={primaryBtn(busy || !company.trim() || !title.trim())} disabled={busy || !company.trim() || !title.trim()} onClick={save}>
+          {busy ? 'adding…' : 'Add role'}
+        </button>
+        <button style={ghostBtn} onClick={onCancel}>Cancel</button>
+      </div>
+    </section>
   );
 }
 
 /**
  * The Kanban. Plain HTML5 drag-and-drop, no library.
  *
- * It renders the filtered set — the old board ignored the list's filters, so
- * switching views silently changed which roles you were looking at.
+ * Every role, unfiltered. A board exists to show the shape of the whole
+ * pipeline; hiding cards because the list happened to be filtered makes the
+ * columns lie about how much is in each.
  */
 function Board({ roles, onDrop }: { roles: RoleItem[]; onDrop: (id: number, status: string) => void }) {
   const [drag, setDrag] = useState<number | null>(null);

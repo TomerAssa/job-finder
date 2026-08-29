@@ -142,6 +142,10 @@ function upsertPositions(
  * Only ever called when the scrape actually returned something. An empty result
  * usually means the page moved or failed to parse, and treating that as "every
  * role here is gone" would wipe out a company's listings on one bad fetch.
+ *
+ * Roles entered by hand are never touched. They are not on the careers page by
+ * definition — that is why they were typed in — so their absence from a scrape
+ * says nothing. Only the person who added one can decide it is over.
  */
 function closeVanishedPositions(companyId: number, seen: Set<number>): number {
   if (seen.size === 0) return 0;
@@ -149,7 +153,7 @@ function closeVanishedPositions(companyId: number, seen: Set<number>): number {
   const info = db()
     .prepare(
       `UPDATE positions SET closed_at = ?
-        WHERE company_id = ? AND closed_at IS NULL
+        WHERE company_id = ? AND closed_at IS NULL AND source != 'manual'
           AND id NOT IN (${ids.map(() => '?').join(',')})`,
     )
     .run(now(), companyId, ...ids);

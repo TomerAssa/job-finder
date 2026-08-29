@@ -126,6 +126,61 @@ export function introductionsIntoCompany(companyId: number): Array<{ id: number;
   ).map((r) => ({ id: r.id, from: r.from_name, note: r.note }));
 }
 
+export interface RolePath {
+  id: number;
+  roleId: number | null;
+  roleTitle: string;
+  connectorId: number | null;
+  connectorName: string | null;
+  connectorCompany: string | null;
+  contactId: number | null;
+  contactName: string | null;
+  contactCompany: string | null;
+  status: string;
+  note: string;
+}
+
+/**
+ * Who can get you into this company, per role.
+ *
+ * These rows have existed since the tracker import and were never rendered —
+ * only counted, to decide whether a role showed a star.
+ */
+export function pathsForCompany(companyId: number): RolePath[] {
+  return (
+    db()
+      .prepare(
+        `SELECT o.id, o.position_id AS role_id, COALESCE(p.title,'(no specific role)') AS role_title,
+                o.connector_person_id AS connector_id, cp.full_name AS connector_name,
+                COALESCE(cc.name, cp.external_company) AS connector_company,
+                o.contact_person_id AS contact_id, tp.full_name AS contact_name,
+                COALESCE(tc.name, tp.external_company) AS contact_company,
+                o.status, COALESCE(o.note,'') AS note
+           FROM outreach o
+           LEFT JOIN positions p  ON p.id = o.position_id
+           LEFT JOIN people cp    ON cp.id = o.connector_person_id
+           LEFT JOIN companies cc ON cc.id = cp.works_company_id
+           LEFT JOIN people tp    ON tp.id = o.contact_person_id
+           LEFT JOIN companies tc ON tc.id = tp.works_company_id
+          WHERE o.company_id = ?
+          ORDER BY o.id DESC`,
+      )
+      .all(companyId) as Record<string, any>[]
+  ).map((r) => ({
+    id: r.id,
+    roleId: r.role_id ?? null,
+    roleTitle: r.role_title,
+    connectorId: r.connector_id ?? null,
+    connectorName: r.connector_name ?? null,
+    connectorCompany: r.connector_company ?? null,
+    contactId: r.contact_id ?? null,
+    contactName: r.contact_name ?? null,
+    contactCompany: r.contact_company ?? null,
+    status: r.status,
+    note: r.note,
+  }));
+}
+
 export function navCounts(): { people: number; jobs: number; companies: number; demoRows: number } {
   const handle = db();
   const one = (sql: string) => (handle.prepare(sql).get() as { c: number }).c;
