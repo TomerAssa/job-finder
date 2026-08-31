@@ -82,43 +82,6 @@ CREATE TABLE IF NOT EXISTS warm_intros (
   UNIQUE(company_id, connection_id, match_type)
 );
 
--- ─── Outreach CRM (user-owned; survives re-scrapes) ────────────────────────
-CREATE TABLE IF NOT EXISTS entities (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  full_name      TEXT NOT NULL,
-  name_norm      TEXT NOT NULL,
-  kind           TEXT NOT NULL DEFAULT 'manual', -- me|connection|connector|pm|hr|employee|source|manual
-  degree         INTEGER,                        -- מעגל: hop distance (1..n)
-  works_company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
-  external_company TEXT,                          -- company not in our 500
-  role           TEXT,
-  linkedin_url   TEXT,
-  contact_detail TEXT,                            -- phone / profile URL
-  talked_status  TEXT,                            -- דיברנו
-  conclusions    TEXT,                            -- מסקנות
-  relevant       TEXT,                            -- yes|no|maybe|unknown
-  status         TEXT,                            -- new|to-reach|talked|following-up|done
-  can_give       TEXT,                            -- JSON array: intro|lead|advice|referral
-  source         TEXT NOT NULL DEFAULT 'manual',  -- import|serp|manual
-  researched_at  TEXT,
-  notes          TEXT,
-  created_at     TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_entities_name_norm ON entities(name_norm);
-CREATE INDEX IF NOT EXISTS idx_entities_company ON entities(works_company_id);
-
-CREATE TABLE IF NOT EXISTS relationships (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  from_entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-  relation       TEXT NOT NULL,                   -- led_me_to|knows|works_at|can_reach
-  to_entity_id   INTEGER REFERENCES entities(id) ON DELETE CASCADE,
-  to_company_id  INTEGER REFERENCES companies(id) ON DELETE CASCADE,
-  source_label   TEXT,                            -- for communities/LinkedIn/family sources
-  note           TEXT,
-  created_at     TEXT NOT NULL,
-  UNIQUE(from_entity_id, relation, to_entity_id, to_company_id, source_label)
-);
-
 CREATE TABLE IF NOT EXISTS role_tracking (
   position_id    INTEGER PRIMARY KEY REFERENCES positions(id) ON DELETE CASCADE,
   relevant       TEXT,                            -- yes|no|maybe|cv_sent
@@ -132,8 +95,6 @@ CREATE TABLE IF NOT EXISTS outreach (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   position_id    INTEGER REFERENCES positions(id) ON DELETE CASCADE,
   company_id     INTEGER REFERENCES companies(id) ON DELETE CASCADE,
-  connector_entity_id INTEGER REFERENCES entities(id) ON DELETE SET NULL,
-  contact_entity_id   INTEGER REFERENCES entities(id) ON DELETE SET NULL,
   channel        TEXT,
   status         TEXT NOT NULL DEFAULT 'todo',    -- todo|contacted|replied|submitted|not_relevant|closed
   note           TEXT,
@@ -141,8 +102,6 @@ CREATE TABLE IF NOT EXISTS outreach (
   contacted_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_outreach_position ON outreach(position_id);
-CREATE INDEX IF NOT EXISTS idx_outreach_connector ON outreach(connector_entity_id);
-CREATE INDEX IF NOT EXISTS idx_outreach_contact ON outreach(contact_entity_id);
 
 CREATE TABLE IF NOT EXISTS check_log (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -198,22 +157,3 @@ export interface ConnectionRow {
   imported_at: string;
 }
 
-export interface EntityRow {
-  id: number;
-  full_name: string;
-  name_norm: string;
-  kind: string;
-  degree: number | null;
-  works_company_id: number | null;
-  external_company: string | null;
-  role: string | null;
-  linkedin_url: string | null;
-  contact_detail: string | null;
-  talked_status: string | null;
-  conclusions: string | null;
-  relevant: string | null;
-  source: string;
-  researched_at: string | null;
-  notes: string | null;
-  created_at: string;
-}
