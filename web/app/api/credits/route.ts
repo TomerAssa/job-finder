@@ -21,14 +21,11 @@ const MIN_SAMPLE = 15;
 export async function GET() {
   const cap = config.brightData.monthlyLimit;
 
-  let used = 0;
-  let usageKnown = true;
-  try {
-    used = await monthlyUsage();
-  } catch {
-    // Redis is what counts spend; without it the cap cannot be enforced either.
-    usageKnown = false;
-  }
+  // Null means Redis could not be reached, which is different from "nothing
+  // spent". Reporting the latter showed a full budget while money was going out.
+  const counted = await monthlyUsage().catch(() => null);
+  const usageKnown = counted != null;
+  const used = counted ?? 0;
 
   const visitedThisMonth = (
     db()
@@ -40,7 +37,11 @@ export async function GET() {
       .get() as { c: number }
   ).c;
 
-  const measured = usageKnown && visitedThisMonth >= MIN_SAMPLE ? used / visitedThisMonth : null;
+  // A zero count over hundreds of companies is not a measurement, it is a
+  // missing counter — and treating it as one told the page each company costs
+  // about one credit when the truth was nearer three.
+  const measured =
+    usageKnown && used > 0 && visitedThisMonth >= MIN_SAMPLE ? used / visitedThisMonth : null;
   const perCompany = Math.max(1, Math.round((measured ?? FALLBACK_PER_COMPANY) * 10) / 10);
 
   return NextResponse.json({

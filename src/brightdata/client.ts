@@ -37,6 +37,18 @@ export function isAuthError(err: unknown): boolean {
     || (err instanceof Error && /BrightData (401|403)|Token expired|auth failed/i.test(err.message));
 }
 
+/** Said once per process: a warning per request would drown the run log. */
+let warnedAboutUncountedSpend = false;
+function warnUncountedSpend(): void {
+  if (warnedAboutUncountedSpend) return;
+  warnedAboutUncountedSpend = true;
+  console.warn(
+    '⚠️  Redis is unreachable, so spend cannot be counted and BRIGHTDATA_MONTHLY_LIMIT ' +
+      'is not being enforced. Responses are not being cached either, so re-crawls ' +
+      'cost full price. Start it with `docker compose up -d redis`.',
+  );
+}
+
 function cacheKey(zone: string, url: string, render: boolean): string {
   return `bd:${zone}:${render ? 'r:' : ''}${createHash('sha1').update(url).digest('hex')}`;
 }
@@ -47,12 +59,20 @@ function monthKey(): string {
   return `bd:count:${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
-/** Current month's billable BrightData request count (0 if Redis unavailable). */
-export async function monthlyUsage(): Promise<number> {
+/**
+ * Billable requests counted this month, or null when that cannot be known.
+ *
+ * The distinction matters more than it looks. This used to return 0 on a Redis
+ * failure, which is indistinguishable from "nothing spent yet" — so with Redis
+ * down the cap below never triggered and the console reported a full budget
+ * while money was going out. A number nobody can vouch for is worse than no
+ * number.
+ */
+export async function monthlyUsage(): Promise<number | null> {
   try {
     return Number((await redis().get(monthKey())) ?? 0);
   } catch {
-    return 0;
+    return null;
   }
 }
 
@@ -84,7 +104,12 @@ export async function brightDataRequest(
   const limit = config.brightData.monthlyLimit;
   if (limit > 0) {
     const used = await monthlyUsage();
-    if (used >= limit) {
+    if (used == null) {
+      // Requests still go out — Redis is documented as optional — but the guard
+      // the user configured is not working, and that has to be said rather than
+      // discovered on a bill.
+      warnUncountedSpend();
+    } else if (used >= limit) {
       throw new Error(
         `BrightData monthly request cap reached (${used}/${limit}). ` +
           `Raise BRIGHTDATA_MONTHLY_LIMIT in .env or wait for the month to reset.`,

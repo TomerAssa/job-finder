@@ -101,9 +101,10 @@ export function stopRun(id: number): void {
     .run(now(), now(), id);
 }
 
+/** Spend so far, or 0 when it cannot be counted — a run must not stall on it. */
 const usage = async (): Promise<number> => {
   try {
-    return await monthlyUsage();
+    return (await monthlyUsage()) ?? 0;
   } catch {
     return 0;
   }
