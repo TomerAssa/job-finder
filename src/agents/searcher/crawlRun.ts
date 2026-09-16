@@ -14,6 +14,7 @@ import { db, now } from '../../db/client.js';
 import { monthlyUsage } from '../../brightdata/client.js';
 import { runSearcher } from './index.js';
 import { runEnrich } from '../enrich/index.js';
+import { fetchPostingDetails } from '../enrich/fetchDetails.js';
 import { config } from '../../config.js';
 
 export interface CrawlRunRow {
@@ -270,9 +271,26 @@ async function execute(id: number): Promise<void> {
     }
   }, 30_000);
   try {
+    // Open the postings themselves first. A listing row is usually a title and
+    // a link, and enrichment reads only the text it is given — so without this
+    // the years filters have nothing to filter on. Billable, hence bounded and
+    // subject to the same stop signal as the sweep.
+    const details = await fetchPostingDetails({
+      limit: 150,
+      shouldStop: async () => {
+        const live = getRun(id);
+        return !live || live.status !== 'running';
+      },
+    });
+    if (details.abortedOn) {
+      db().prepare(`UPDATE crawl_runs SET error = COALESCE(error, ?), updated_at = ? WHERE id = ?`)
+        .run(details.abortedOn, now(), id);
+    }
     await runEnrich({ limit: 200 });
-  } catch {
-    /* enrichment is best-effort; the roles are already saved */
+  } catch (err) {
+    // Best-effort — the roles are already saved — but a silent failure here is
+    // exactly how the years columns stayed empty without anyone noticing.
+    console.error(`⚠️  Reading phase failed: ${err instanceof Error ? err.message : String(err)}`);
   } finally {
     clearInterval(heartbeat);
   }

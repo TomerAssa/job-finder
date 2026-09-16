@@ -11,6 +11,7 @@ import { reclassifyPositions } from './agents/searcher/reclassify.js';
 import { startRun, getRun } from './agents/searcher/crawlRun.js';
 import { runHotApproach } from './agents/hotApproach/index.js';
 import { runEnrich } from './agents/enrich/index.js';
+import { fetchPostingDetails, selectPostingsNeedingDetail } from './agents/enrich/fetchDetails.js';
 import { runImportTracker } from './agents/import/tracker.js';
 import { findPeople } from './agents/people/index.js';
 import { exportNewPositions } from './agents/export/newXlsx.js';
@@ -299,6 +300,24 @@ program
   .option('--all', 'enrich ALL positions, not just Product Manager roles', false)
   .option('--force', 're-enrich positions that already have requirements', false)
   .action((o) => runEnrich({ limit: o.limit, force: o.force, all: o.all }));
+
+// ── details ──
+program
+  .command('details')
+  .description('Open the job postings themselves, so enrichment has text to read years and location out of.')
+  .option('--limit <n>', 'read at most N postings (each one is a billable request)', (v) => parseInt(v, 10))
+  .option('--all', 'read ALL postings, not just Product Manager roles', false)
+  .option('--dry-run', 'list what would be read without spending anything', false)
+  .action(async (o) => {
+    if (o.dryRun) {
+      const pending = selectPostingsNeedingDetail({ limit: o.limit, all: o.all });
+      console.log(`${pending.length} posting(s) would be read:`);
+      for (const p of pending.slice(0, 20)) console.log(`  ${p.title} — ${p.url}`);
+      if (pending.length > 20) console.log(`  … and ${pending.length - 20} more`);
+      return;
+    }
+    await fetchPostingDetails({ limit: o.limit, all: o.all });
+  });
 
 // ── connect ──
 program
