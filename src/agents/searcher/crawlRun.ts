@@ -83,11 +83,45 @@ export function getRun(id: number): CrawlRunRow | null {
 }
 
 /** The run in progress, if any. At most one runs at a time. */
+/**
+ * How long a run may go without a heartbeat before it is presumed dead.
+ *
+ * The loop touches `updated_at` after every company, and the reading phase
+ * heartbeats on a timer, so a genuinely live run is never quiet for this long.
+ */
+const HEARTBEAT_STALE_MS = 5 * 60_000;
+
+/**
+ * The run in progress, if one really is.
+ *
+ * A run belongs to the process executing it. Restart the server mid-crawl and
+ * the row is left claiming `running` forever: the progress bar sits at 3 of 500
+ * and never moves, and — worse — `startRun` refuses to begin anything new,
+ * because it believes a crawl is already going. A row nobody is updating is
+ * therefore reaped rather than trusted.
+ */
 export function activeRun(): CrawlRunRow | null {
-  return (
-    (db().prepare(`SELECT * FROM crawl_runs WHERE status = 'running' ORDER BY id DESC LIMIT 1`).get() as CrawlRunRow) ??
-    null
-  );
+  const row = db()
+    .prepare(`SELECT * FROM crawl_runs WHERE status = 'running' ORDER BY id DESC LIMIT 1`)
+    .get() as CrawlRunRow | undefined;
+  if (!row) return null;
+
+  const quietFor = Date.now() - new Date(row.updated_at).getTime();
+  if (Number.isFinite(quietFor) && quietFor > HEARTBEAT_STALE_MS) {
+    db()
+      .prepare(
+        `UPDATE crawl_runs SET status='stopped', finished_at=?, updated_at=?,
+                error=COALESCE(error, ?) WHERE id=? AND status='running'`,
+      )
+      .run(
+        now(),
+        now(),
+        `Stopped updating ${Math.round(quietFor / 60_000)} minutes ago — the process running it ended.`,
+        row.id,
+      );
+    return null;
+  }
+  return row;
 }
 
 export function latestRun(): CrawlRunRow | null {
@@ -226,10 +260,21 @@ async function execute(id: number): Promise<void> {
   // Reading listings for experience and location costs no scrape credits, and
   // without it the filters the user came for do nothing on anything new.
   db().prepare(`UPDATE crawl_runs SET phase='reading', updated_at=? WHERE id=?`).run(now(), id);
+  // Reading gives no per-item signal, so it would otherwise look abandoned to
+  // the staleness check that reaps dead runs.
+  const heartbeat = setInterval(() => {
+    try {
+      db().prepare(`UPDATE crawl_runs SET updated_at=? WHERE id=? AND status='running'`).run(now(), id);
+    } catch {
+      /* a failed heartbeat is not worth ending the run over */
+    }
+  }, 30_000);
   try {
     await runEnrich({ limit: 200 });
   } catch {
     /* enrichment is best-effort; the roles are already saved */
+  } finally {
+    clearInterval(heartbeat);
   }
   db().prepare(`UPDATE crawl_runs SET phase='finished', updated_at=? WHERE id=?`).run(now(), id);
 
