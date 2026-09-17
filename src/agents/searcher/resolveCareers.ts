@@ -10,6 +10,34 @@ import type { Resolved } from './types.js';
 const NON_COMPANY_HOSTS =
   /linkedin\.|facebook\.|twitter\.|x\.com|glassdoor\.|crunchbase\.|wikipedia\.|comparably\.|indeed\.|ziprecruiter\./i;
 
+/**
+ * Hosts that list many companies' jobs, so a page on one is never *this*
+ * company's careers page.
+ *
+ * Accepting one is not a cosmetic error: whatever roles the page happens to
+ * show get scraped and filed under this company. That is how three openings at
+ * Cyble arrived labelled "Cybool" — the resolver picked a LinkedIn jobs page
+ * for a similarly-named company and an LLM read it as if it were the careers
+ * site. Venture portfolio boards are the same trap wearing a company's domain.
+ */
+const JOB_BOARD_HOSTS =
+  /linkedin\.|glassdoor\.|indeed\.|ziprecruiter\.|dice\.com|monster\.|wellfound\.|angel\.co|builtin\.|allremote\.|secretjobs\.|techaviv\.|crunchbase\.|portfoliojobs\.|\.vc$|\.vc\//i;
+
+/** True when a URL lives on a multi-company job board rather than a company's own site or ATS. */
+export function isJobBoardHost(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  // A venture fund's board is usually jobs.<fund>.com listing its portfolio.
+  if (/^jobs\.(insightpartners|initialized|f2vc|jvpvc|decibel|greylock|sequoiacap|a16z|bvp|lightspeedvp)\./i.test(host)) {
+    return true;
+  }
+  return JOB_BOARD_HOSTS.test(host);
+}
+
 const Select = z.object({ careers_url: z.string().nullable(), reason: z.string().optional() });
 
 export interface ResolveOpts {
@@ -29,14 +57,29 @@ function resolvedFor(url: string, website: string | null): Resolved {
  * "entro" or "dreamgroup" for "Entro Security" / "Dream Security"). Rejects
  * unrelated brands (slug "tenableinc"/"palantir"/"paytm").
  */
-function tokenMatches(norm: string, token: string): boolean {
+export function tokenMatches(norm: string, token: string): boolean {
   const t = normalizeCompany(token).replace(/\s+/g, '');
   if (!t) return false;
-  if (similarity(norm, t) >= 0.8) return true;
+  // 0.8 accepted one-character differences between genuinely different
+  // companies — "specter" scored 0.875 against both Specters and SpecterX, and
+  // "celestia" 0.875 against Celestya. The matches this threshold exists for
+  // (spacing and punctuation, "cyberark" for Cyber Ark) sit at or near 1.0, so
+  // tightening it loses nothing real.
+  if (similarity(norm, t) >= 0.95) return true;
   const words = norm.split(' ').filter((w) => w.length >= 3);
   const first = words[0];
   if (!first) return false;
-  return t === first || t.startsWith(first) || first.startsWith(t);
+
+  // The two prefix directions are not equally safe, and treating them as if
+  // they were is what let one Ashby board be claimed by three companies at
+  // once. A slug may EXTEND the company's distinctive word — "dreamgroup" for
+  // Dream Security, a brand or parent group — because that still names this
+  // company. But a slug that is merely a PREFIX of the name ("rain" for
+  // RainCheck AI, Rainguard AI and Rein Security alike) names a shorter,
+  // different company and matches every longer one that starts the same way.
+  // Rejecting that direction costs nothing: the candidate falls through to the
+  // LLM pick, which sees the sector and description too.
+  return t === first || t.startsWith(first);
 }
 
 /**
@@ -81,6 +124,7 @@ export async function resolveCareers(name: string, opts: ResolveOpts = {}): Prom
 
     // Fast path: an ATS board whose slug clearly matches the company name.
     for (const c of candidates) {
+      if (isJobBoardHost(c.url)) continue;
       const d = detectAts(c.url);
       if (d.token && tokenMatches(norm, d.token)) {
         return { careersUrl: c.url, atsType: d.atsType, token: d.token, websiteUrl: website };
@@ -125,6 +169,10 @@ async function geminiPick(
     );
     const url = sel.careers_url?.trim();
     if (!url || !/^https?:\/\//.test(url)) return null;
+    // The prompt asks for the company's own page, but a near-name match is
+    // exactly where it gives in and returns an aggregator. Cheaper to refuse
+    // here than to scrape a stranger's openings into this company's row.
+    if (isJobBoardHost(url)) return null;
     return candidates.some((c) => c.url === url) ? url : null;
   } catch {
     return null;
@@ -137,6 +185,7 @@ function deterministicPick(candidates: SerpResult[], website: string | null): Re
   };
   let best: { url: string; score: number } | null = null;
   for (const c of candidates) {
+    if (isJobBoardHost(c.url)) continue;
     const score = priority[detectAts(c.url).atsType] ?? 0;
     if (score > 0 && (!best || score > best.score)) best = { url: c.url, score };
   }
