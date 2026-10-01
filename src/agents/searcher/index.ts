@@ -193,12 +193,17 @@ async function processCompany(company: CompanyRow, force: boolean): Promise<stri
       websiteUrl = resolved.websiteUrl ?? websiteUrl;
     }
 
+    // Stamp the empty result so the next sweep can skip the expensive search,
+    // and clear the stamp the moment a page turns up — a company that has just
+    // published a careers page must not stay written off for 45 days.
     db()
       .prepare(
         `UPDATE companies SET careers_url = ?, ats_type = ?, website_url = ?,
-           status = 'checked', last_error = NULL, last_checked_at = ? WHERE id = ?`,
+           status = 'checked', last_error = NULL, last_checked_at = ?,
+           careers_unresolved_at = CASE WHEN COALESCE(?, '') = '' THEN ? ELSE NULL END
+         WHERE id = ?`,
       )
-      .run(careersUrl, atsType, websiteUrl, now(), company.id);
+      .run(careersUrl, atsType, websiteUrl, now(), careersUrl, now(), company.id);
 
     let added = 0;
     let found = 0;
@@ -308,6 +313,18 @@ function explainEmptySelection(opts: SearchOpts, params: number[]): string {
   );
 }
 
+/**
+ * SQL excluding companies whose careers-page search recently came up empty.
+ *
+ * Shared with `dueCount` so the progress bar's target and the work actually
+ * done cannot disagree — a run that reported 500 and visited 364 would look
+ * like it had stalled.
+ */
+export function unresolvedBackoffClause(): string {
+  return `(careers_unresolved_at IS NULL
+           OR careers_unresolved_at < datetime('now', '-${Number(config.unresolvedTtlDays)} days'))`;
+}
+
 /** Run the searcher over pending/eligible companies with bounded concurrency. */
 export async function runSearcher(opts: SearchOpts = {}): Promise<SearchRunResult> {
   requireBrightData();
@@ -317,13 +334,14 @@ export async function runSearcher(opts: SearchOpts = {}): Promise<SearchRunResul
   // while its listings moved on without us. Staleness is judged from
   // last_checked_at rather than Redis, because the Redis keys expire and the
   // question "when did we last look" has to survive that.
-  const clauses = [
-    opts.force
-      ? '1=1'
-      : `(status IN ('pending','error')
+  const clauses = opts.force
+    ? ['1=1']
+    : [
+        `(status IN ('pending','error')
           OR last_checked_at IS NULL
           OR last_checked_at < datetime('now', '-${Number(config.checkTtlDays)} days'))`,
-  ];
+        unresolvedBackoffClause(),
+      ];
   const params: number[] = [];
   if (opts.listIds?.length) {
     clauses.push(

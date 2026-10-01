@@ -12,7 +12,7 @@
  */
 import { db, now } from '../../db/client.js';
 import { monthlyUsage } from '../../brightdata/client.js';
-import { runSearcher } from './index.js';
+import { runSearcher, unresolvedBackoffClause } from './index.js';
 import { runEnrich } from '../enrich/index.js';
 import { fetchPostingDetails } from '../enrich/fetchDetails.js';
 import { config } from '../../config.js';
@@ -58,7 +58,8 @@ const scope = (sectors: number[]) =>
 export function dueCount(sectors: number[], force = false): number {
   const clause = force
     ? '1=1'
-    : `(last_checked_at IS NULL OR last_checked_at < datetime('now','-${Number(config.checkTtlDays)} days'))`;
+    : `(last_checked_at IS NULL OR last_checked_at < datetime('now','-${Number(config.checkTtlDays)} days'))
+       AND ${unresolvedBackoffClause()}`;
   return (
     db()
       .prepare(`SELECT COUNT(*) c FROM companies WHERE id ${scope(sectors)} AND ${clause}`)

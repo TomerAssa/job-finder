@@ -89,6 +89,14 @@ export const config = {
   searchUseLlm: (process.env.SEARCH_USE_LLM ?? 'true').toLowerCase() !== 'false',
   checkTtlDays: num('CHECK_TTL_DAYS', 7),
   /**
+   * How long to leave a company alone after a careers-page search found
+   * nothing. Much longer than checkTtlDays on purpose: finding no page costs
+   * two SERP queries and an LLM pick — the most expensive thing a crawl does —
+   * and a company without a careers page this month will not have grown one by
+   * next week. `--force` still re-checks them.
+   */
+  unresolvedTtlDays: num('UNRESOLVED_TTL_DAYS', 45),
+  /**
    * Where you are looking for work. Used as the search default, and to drop
    * postings whose stated location is somewhere else before they are stored.
    * Set it empty to keep everything, wherever it is.
