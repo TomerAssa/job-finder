@@ -38,10 +38,16 @@ export function matchesTitle(title: string | null | undefined, matcher: TitleMat
 }
 
 /**
- * The default profile: product management in any flavour, deliberately excluding
- * adjacent-but-different roles that also contain the word "product".
+ * The default profile: the roles this search is actually for.
+ *
+ * It began as product management alone, which is why the column it drives is
+ * still called `is_product`. The column now means "a role I am targeting" —
+ * product management plus the adjacent technical-customer-facing roles that
+ * the same background reaches: solutions, customer success, automation, and
+ * forward-deployed engineering. Read `is_product` that way; renaming it would
+ * mean a migration through every report and export that reads it.
  */
-export const PRODUCT_MANAGER: TitleMatcher = {
+export const TARGET_ROLES: TitleMatcher = {
   include: [
     'product manager', 'product owner', 'product management',
     'product lead', 'product leader',
@@ -50,12 +56,33 @@ export const PRODUCT_MANAGER: TitleMatcher = {
     // "Product builder" is how a growing number of startups advertise a hands-on
     // PM role, especially where the job spans product and delivery.
     'product builder', 'product builders', 'founding product manager',
+    // "Technical Product Manager" already matches on "product manager"; listed
+    // for the reader, not because the matcher needs it.
+    'technical product manager',
+    // Pre-sales and post-sales technical roles. Different job, same ground:
+    // owning what a product does for a customer without owning the roadmap.
+    'solutions engineer', 'solution engineer',
+    'solutions architect', 'solution architect',
+    'solutions consultant', 'solution consultant',
+    'solutions manager', 'solutions lead',
+    'customer success manager', 'customer success', 'csm',
+    // Automation, named specifically. A bare "automation" term would sweep in
+    // the whole QA and DevOps shelf — "QA Automation Tester", "Software
+    // Engineer - Test Automation" — which is a different career.
+    'automation engineer', 'automation developer', 'automation specialist',
+    'automation manager', 'automation lead', 'automation architect',
+    // Lowest priority of the set, and worth knowing that in this data it is
+    // almost entirely Principal/Staff/Senior postings.
+    'forward deployed engineer', 'forward deployed',
   ],
   exclude: [
     // Adjacent roles that contain "product" but are not product management.
     'product marketing', 'product design', 'product designer', 'product analyst',
     'product support', 'product specialist', 'product operations', 'product ops',
     'project manager', 'program manager',
+    // Test and QA automation: the word matches, the job does not.
+    'test automation', 'qa automation', 'automation qa', 'automation tester',
+    'automation testing',
     // Executive tier. Excluded deliberately: these are not reachable at the
     // experience level this search targets, and they crowd out the roles that are.
     'vp', 'vp product', 'vice president', 'svp', 'evp',
@@ -66,7 +93,7 @@ export const PRODUCT_MANAGER: TitleMatcher = {
 
 /** Kept for the many call sites that only ever ask the default question. */
 export function isProductManager(title: string | null | undefined): boolean {
-  return matchesTitle(title, PRODUCT_MANAGER);
+  return matchesTitle(title, TARGET_ROLES);
 }
 
 /**
@@ -75,7 +102,7 @@ export function isProductManager(title: string | null | undefined): boolean {
  */
 export function matcherFromKeywords(keywords: string[] | undefined | null): TitleMatcher {
   const include = (keywords ?? []).map((k) => k.trim()).filter(Boolean);
-  return include.length ? { include } : PRODUCT_MANAGER;
+  return include.length ? { include } : TARGET_ROLES;
 }
 
 /**

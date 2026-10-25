@@ -104,3 +104,56 @@ describe('company list naming', () => {
     assert.equal(listNameFromFile('my-companies.csv'), 'my-companies');
   });
 });
+
+describe('the widened target profile', () => {
+  test('matches the solutions family', () => {
+    for (const t of [
+      'Solutions Engineer', 'Solution Engineer', 'Senior Solutions Engineer',
+      'Solutions Architect', 'Cloud Solutions Architect',
+      'Solutions Consultant', 'Solutions Manager',
+    ]) {
+      assert.equal(isProductManager(t), true, t);
+    }
+  });
+
+  test('matches customer success and the CSM abbreviation', () => {
+    for (const t of ['Customer Success Manager', 'CSM', 'Customer Success Engineer']) {
+      assert.equal(isProductManager(t), true, t);
+    }
+    // Single words match whole words only, so the abbreviation cannot match inside another.
+    assert.equal(isProductManager('CSManager Platform'), false);
+  });
+
+  test('matches a technical product manager', () => {
+    assert.equal(isProductManager('Technical Product Manager'), true);
+    assert.equal(isProductManager('Senior Technical Product Manager'), true);
+  });
+
+  test('matches automation roles but not QA test automation', () => {
+    for (const t of ['Automation Engineer', 'Automation Developer', 'AI Automation Manager']) {
+      assert.equal(isProductManager(t), true, t);
+    }
+    // The word is the same; the career is not. These were the real titles in
+    // the scraped data that a bare "automation" term would have swept in.
+    for (const t of [
+      'QA Automation Tester', 'Software Engineer - Test Automation',
+      'Automation QA Engineer', 'Junior Software Developer – Test Automation',
+    ]) {
+      assert.equal(isProductManager(t), false, t);
+    }
+  });
+
+  test('matches forward deployed engineering', () => {
+    assert.equal(isProductManager('Forward Deployed Engineer'), true);
+    assert.equal(isProductManager('Principal Software Engineer, Applied AI (Forward Deployed)'), true);
+  });
+
+  test('still refuses the executive tier and the adjacent product roles', () => {
+    for (const t of [
+      'VP Product', 'Chief Product Officer', 'Director of Product',
+      'Product Marketing Manager', 'Product Designer', 'Program Manager',
+    ]) {
+      assert.equal(isProductManager(t), false, t);
+    }
+  });
+});
