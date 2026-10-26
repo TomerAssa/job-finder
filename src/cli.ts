@@ -184,9 +184,22 @@ program
   .command('prune')
   .description('Delete stored positions that enrichment placed outside your search area.')
   .option('--dry-run', 'report what would go without deleting', false)
+  .option(
+    '--include-tracked',
+    'also delete postings you have recorded a status or outreach against (they are kept by default)',
+    false,
+  )
   .action((o) => {
     const handle = db();
-    const where = `id IN (SELECT position_id FROM position_requirements WHERE is_israel = 0)`;
+    // Anything you typed outranks anything a scraper found, and a status is the
+    // most expensive thing in this database to recreate: it is the only record
+    // that you applied. A rejected Germany role is still the fact that you were
+    // rejected. So a posting carrying your own status or outreach survives the
+    // prune unless you explicitly ask otherwise.
+    const yours = `(id IN (SELECT position_id FROM role_tracking WHERE position_id IS NOT NULL)
+                    OR id IN (SELECT position_id FROM outreach WHERE position_id IS NOT NULL))`;
+    const where = `id IN (SELECT position_id FROM position_requirements WHERE is_israel = 0)`
+      + (o.includeTracked ? '' : ` AND NOT ${yours}`);
     const count = (sql: string) => (handle.prepare(sql).get() as { c: number }).c;
 
     const total = count(`SELECT COUNT(*) c FROM positions WHERE ${where}`);
@@ -196,6 +209,13 @@ program
     const reached = count(
       `SELECT COUNT(*) c FROM outreach WHERE position_id IN (SELECT id FROM positions WHERE ${where})`,
     );
+    // Said even on a dry run: the whole point is that these are not going.
+    const kept = o.includeTracked
+      ? 0
+      : count(
+          `SELECT COUNT(*) c FROM positions
+            WHERE id IN (SELECT position_id FROM position_requirements WHERE is_israel = 0) AND ${yours}`,
+        );
 
     if (!config.defaultLocation) {
       console.log('No DEFAULT_LOCATION set, so nothing counts as outside your search area.');
@@ -203,6 +223,10 @@ program
     }
     console.log(`${o.dryRun ? '🔍 Would delete' : '🧹 Deleting'} ${total} positions outside ${config.defaultLocation}` +
       `${tracked ? `, ${tracked} carrying a status` : ''}${reached ? `, ${reached} with outreach recorded` : ''}.`);
+    if (kept) {
+      console.log(`   keeping ${kept} outside ${config.defaultLocation} that carry your own status or ` +
+        `outreach — pass --include-tracked to delete those too.`);
+    }
     if (o.dryRun) return;
 
     const info = handle.prepare(`DELETE FROM positions WHERE ${where}`).run();
