@@ -84,7 +84,7 @@ export async function monthlyUsage(): Promise<number | null> {
 export async function brightDataRequest(
   zone: string,
   url: string,
-  opts: { cache?: boolean; render?: boolean } = {},
+  opts: { cache?: boolean; render?: boolean; timeoutMs?: number } = {},
 ): Promise<string> {
   requireBrightData();
   const render = opts.render === true;
@@ -117,14 +117,33 @@ export async function brightDataRequest(
     }
   }
 
-  const res = await fetch(ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.brightData.apiKey}`,
-    },
-    body: JSON.stringify({ zone, url, format: 'raw', ...(render ? { render: 'true' } : {}) }),
-  });
+  // Never hang. There was no timeout here at all, and it cost nine hours: the
+  // careers-page probe fetches company domains directly, dead startup domains
+  // take upwards of 100 seconds to give up, and 213 companies at up to three
+  // paths each turned a two-hour crawl into an overnight one. A request that
+  // has not answered by now is not going to.
+  const ctrl = new AbortController();
+  const budget = opts.timeoutMs ?? config.brightData.timeoutMs;
+  const timer = setTimeout(() => ctrl.abort(), budget);
+  let res: Response;
+  try {
+    res = await fetch(ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.brightData.apiKey}`,
+      },
+      body: JSON.stringify({ zone, url, format: 'raw', ...(render ? { render: 'true' } : {}) }),
+      signal: ctrl.signal,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    // Reported as a timeout, which `isTransientError` already treats as worth
+    // retrying — and which callers must not read as "this page does not exist".
+    if (ctrl.signal.aborted) throw new Error(`BrightData timeout after ${budget}ms for ${url}`);
+    throw err;
+  }
+  clearTimeout(timer);
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');

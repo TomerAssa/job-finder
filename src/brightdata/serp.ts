@@ -54,12 +54,33 @@ async function searchViaSerpZone(query: string, num: number): Promise<SerpResult
   try {
     json = JSON.parse(raw);
   } catch {
-    return [];
+    // Was `return []`, which is indistinguishable from "this company has
+    // nothing" and is how a zone malfunction got recorded as a fact about
+    // hundreds of companies. A payload we cannot read is an error.
+    throw new Error(
+      `SERP zone "${config.brightData.serpZone}" returned unparseable output for "${query}": ` +
+        `${raw.slice(0, 200)}`,
+    );
   }
   const organic: any[] = json.organic ?? json.organic_results ?? [];
-  return organic
+  const mapped: SerpResult[] = organic
     .map((r) => ({ title: r.title ?? r.name ?? '', url: r.link ?? r.url ?? '', description: r.description ?? r.snippet ?? '' }))
     .filter((r: SerpResult) => r.url);
+
+  // Google sometimes hands back its own redirect interstitial instead of the
+  // destination — `google.com/goto?url=CAES…`, an opaque blob we cannot resolve
+  // and nothing downstream can use. Observed at seven of nine results on fresh
+  // queries. Dropping them is honest; passing them on makes the candidate list
+  // look full while being empty.
+  const usable = mapped.filter((r) => !/^https?:\/\/(?:www\.)?google\.[a-z.]+\/goto/i.test(r.url));
+  if (mapped.length > 0 && usable.length === 0) {
+    throw new Error(
+      `SERP zone "${config.brightData.serpZone}" returned only Google redirect wrappers for ` +
+        `"${query}" (${mapped.length} results, none with a usable URL). The zone is not ` +
+        `returning destination links.`,
+    );
+  }
+  return usable;
 }
 
 // ── Web Unlocker fallback (DuckDuckGo HTML, parsed here) ──────────────────────

@@ -1,0 +1,20 @@
+-- Tell "acquired" apart from "closed".
+--
+-- The Israeli cyber sector consolidates faster than a company list ages. Of the
+-- companies a crawl could not resolve, a steady share turned out to have been
+-- bought rather than shut: CyberArk by Palo Alto Networks, Votiro by Menlo
+-- Security, Laminar by Rubrik, Bionic by CrowdStrike. Every one of them was
+-- heading for the suspected-closed list, which is both wrong and useless — the
+-- openings did not disappear, they moved to the acquirer, and that is a lead
+-- rather than a dead end.
+--
+-- The DNS check cannot catch these: the domain still resolves, it just serves
+-- somebody else's brand. `cyberark.com/careers` returns Palo Alto Networks'
+-- page, and `votiro.com/careers` returns Menlo Security's Ashby board.
+--
+-- 'acquired' is therefore a lifecycle state of its own. It still stops the
+-- crawl — fetching an acquired company's careers page scrapes the acquirer's
+-- openings and files them under the wrong name, which is how 33 US federal
+-- roles ended up attributed to an Israeli company — but it is labelled for what
+-- it is, and it names where the jobs went.
+ALTER TABLE companies ADD COLUMN lifecycle_successor TEXT;

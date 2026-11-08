@@ -94,6 +94,84 @@ Companies appear in several sector CSVs, so the link is many-to-many:
 `company_list_members(list_id, company_id)`. `companies.sector` is promoted out of the
 `metadata` JSON blob into a real indexed column so it can be filtered on.
 
+### `companies.lifecycle` — why a company is not worth crawling
+
+`careers_unresolved_at` records *that* a careers page could not be found; it cannot say
+why, and the causes want opposite treatment. A dead domain is worth nothing; a real
+company behind a JS portal is worth a minute of a human's time. Both were retried on the
+same 45-day cycle.
+
+So the outcome is stored rather than inferred: `lifecycle` is `NULL` (crawl normally),
+`suspected_closed`, `acquired`, `no_web_presence`, `out_of_scope`, or `live` (confirmed by
+hand — flagged, but never skipped).
+
+**`acquired` exists because "closed" was the wrong word for a steady share of them.** The
+Israeli cyber sector consolidates faster than a company list ages: CyberArk went to Palo
+Alto Networks, Votiro to Menlo Security, Laminar to Rubrik, Bionic to CrowdStrike. The
+openings did not vanish, they moved to the buyer, so `lifecycle_successor` names it and the
+row reads as a lead rather than a dead end. No other check can see this — the domain still
+resolves and returns 200, it just serves somebody else's brand.
+
+It is detected by `checkBrand()` in `src/util/brand.ts`: a page is suspect when none of its
+own brand strings (`og:site_name`, `<title>`) name the company, and it is only acted on when
+a successor can be read off it, because "this page does not say your name" also describes a
+rebrand. Two guards earned from a dry run that proposed four flags and got all four wrong —
+the stored host must be verifiably the company's (three rows carry `google.com`, which
+yielded "2C3D → Google"), and a successor must look like a name rather than a tagline
+("7Ci → Secure. At The Core."). The check runs inside `probeCareersOnDomain`, so it costs
+nothing beyond the fetch a crawl already makes, and it runs **before** the embedded-ATS
+detection: `votiro.com/careers` serves Menlo's Ashby board, and checking later would file
+Menlo's openings under Votiro. `lifecycle_reason` carries the machine-readable cause
+(`dead-domain`, `closed`, `likely-closed`, `not-israeli`, `no-website-found`, `manual`),
+`lifecycle_evidence` what was actually seen, and `lifecycle_source` who decided: `user`
+outranks `auto` permanently, so a company checked by hand is never re-parked by a scan.
+
+**A flag and a skip are two different things**, and collapsing them is a bug that costs
+money. `SKIP_STATES` (`suspected_closed`, `out_of_scope`) are claims about the *company*
+and are excluded from the searcher's selection. `REVIEW_STATES` (`no_web_presence`) is a
+claim about *our search* — we never found their own site — so it goes on a list for a
+human and keeps being crawled at the normal price. Treating every flag as a skip took
+Augury out of the crawl, a company with hundreds of employees that is visibly hiring,
+because the only host a SERP had ever returned for it was a job board.
+
+The skip is applied by `activeCompanyClause()`, shared with `dueCount()` so the progress
+target cannot disagree with what a run visits. It **survives `--force`**: ignoring the
+freshness window is a reasonable thing to want, paying to re-crawl an NXDOMAIN is not.
+`--include-dormant` is the explicit opt-in.
+
+**How a company gets flagged.** `--seed` imports a vetting pass (this is where almost all
+of them come from — 233 rows carrying real evidence). `--dns` resolves each stored
+hostname and parks only a unanimous NXDOMAIN, which costs nothing and is the cheap
+pre-filter for the *next* expansion rather than a way to clean the current one: it found
+one dead domain in 871 already-crawled companies, because the vetting pass had already
+removed the other 182. `--aggregators` flags companies whose only known host is somebody
+else's job board. `--scan` flags the rare company with no host at all.
+
+`syncLifecycleLists()` derives one browsable `company_lists` row per state (`⚠ Suspected
+closed`, `⚠ No website found`, `⚠ Out of scope (not Israeli)`) from the column, rather
+than maintaining the two by hand, which always drifts.
+
+**CLI.** `job dormant` reports and maintains the lists (`--scan` flags crawled companies
+that returned no site at all, `--seed <csv>` imports a vetting pass of removed companies,
+`--dns` parks dead domains, `--aggregators` flags companies known only by a job board,
+`--acquired` runs the brand check over already-crawled companies, `--mark-live <name>`
+records a manual check and re-queues the company, `--mark-acquired <name> --by <buyer>`
+records an acquisition, `--csv` exports). `job backfill-domains` fills `website_url` from a
+source CSV's real websites — without it the domain probe and the brand check have nothing
+trustworthy to read. `job careers-gap` is the opposite list: companies that demonstrably
+exist — a website came back — but whose careers page never resolved. That is the
+manual-dive queue, ordered by headcount, which is the strongest predictor in this data
+of whether a company is hiring at all.
+
+`website_url` is **not** a verified company site: the resolver keeps the first non-social
+host a SERP returns, so Aidoc is on file as google.com, Alma Lasers as pgcareers.com and
+Hazera as greenhouse.com. `careers-gap` therefore reports `own_site`, from
+`hostLooksLikeCompany()` — a free name-versus-hostname comparison that is shown as a
+signal and never used to park anything, because it is right often enough to be worth a
+glance and not often enough to decide. Only 16 of the 127 companies of 51+ employees in
+the gap list have a host matching their own name; the rest need finding before they need
+reading.
+
 ### Migrations
 
 There is no migration tool today — `SCHEMA_SQL` is one string of `CREATE TABLE IF NOT EXISTS`

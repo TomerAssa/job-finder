@@ -7,7 +7,7 @@ import { config, requireBrightData } from './config.js';
 import { brightDataRequest, monthlyUsage } from './brightdata/client.js';
 import { serpSearch, serpMode } from './brightdata/serp.js';
 import { redis } from './redis.js';
-import { complete } from './llm/provider.js';
+import { complete, currentModel } from './llm/provider.js';
 
 function ok(label: string, detail = '') { console.log(`  ✅ ${label}${detail ? ` — ${detail}` : ''}`); }
 function bad(label: string, detail = '') { console.log(`  ❌ ${label}${detail ? ` — ${detail}` : ''}`); }
@@ -59,11 +59,9 @@ export async function runDoctor(): Promise<void> {
   }
 
   // ── LLM ──
-  const model = config.llm.provider === 'gemini' ? config.llm.geminiModel
-    : config.llm.provider === 'ollama' ? config.llm.ollamaModel
-    : config.llm.provider === 'anthropic' ? config.llm.anthropicModel
-    : config.llm.openaiModel;
-  console.log(`  ℹ️  LLM provider: "${config.llm.provider}" (${model})`);
+  // Was a fourth copy of the provider→model switch, and reported "gpt-4o" for
+  // any provider it had not been taught about. One lookup, shared.
+  console.log(`  ℹ️  LLM provider: "${config.llm.provider}" (${currentModel()})`);
   try {
     const reply = await complete('Reply with the single word: OK', { temperature: 0 });
     if (/ok/i.test(reply)) ok('LLM reachable', `${config.llm.provider} replied`);

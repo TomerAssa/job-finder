@@ -10,6 +10,8 @@ import { resolveCareers } from './resolveCareers.js';
 import { extractPositions } from './extract.js';
 import { linkedinPmJobs } from './sources/linkedin.js';
 import { isProductManager } from '../../util/roles.js';
+import { isLlmUnavailable } from '../../llm/provider.js';
+import { activeCompanyClause, dormantCounts, flagCompany, skipsCrawl } from '../../db/lifecycle.js';
 import { isSameJob } from './sameJob.js';
 import { matchesLocation } from '../../util/location.js';
 
@@ -26,6 +28,13 @@ export interface SearchOpts {
    * thousands of rows across several sectors rather than one 500-row export.
    */
   listIds?: number[];
+  /**
+   * Also visit companies parked as closed, out of scope, or with no findable
+   * web presence. Off by default, and deliberately NOT implied by `force`:
+   * ignoring the freshness window is a reasonable thing to want, while paying
+   * to re-crawl a dead domain is not.
+   */
+  includeDormant?: boolean;
   /**
    * Called after each company finishes. Lets a long run report progress while
    * it is still going, rather than only between batches.
@@ -191,6 +200,31 @@ async function processCompany(company: CompanyRow, force: boolean): Promise<stri
       atsType = resolved.atsType;
       token = resolved.token;
       websiteUrl = resolved.websiteUrl ?? websiteUrl;
+
+      // The company's domain now carries another organisation's brand. That is
+      // a finding, not a failure: record who bought them and stop, rather than
+      // filing this away as "no careers page" and paying to look again in 45
+      // days for a company that no longer exists on its own.
+      if (resolved.acquiredBy) {
+        flagCompany({
+          companyId: company.id,
+          lifecycle: 'acquired',
+          reason: 'brand-mismatch',
+          evidence:
+            `Their own site now serves another brand: "${resolved.sawBrand ?? resolved.acquiredBy}". ` +
+            `Nothing on the page names ${company.name}. The openings are likely at ${resolved.acquiredBy}.`,
+          successor: resolved.acquiredBy,
+        });
+        db()
+          .prepare(
+            `UPDATE companies SET website_url = ?, status = 'checked', last_error = NULL,
+                    last_checked_at = ?, careers_unresolved_at = NULL WHERE id = ?`,
+          )
+          .run(websiteUrl, now(), company.id);
+        await markFresh(company.id, config.checkTtlDays);
+        finishLog(logId, 'ok', { acquiredBy: resolved.acquiredBy });
+        return `→ ${company.name}: acquired by ${resolved.acquiredBy} — openings are at the buyer`;
+      }
     }
 
     // Stamp the empty result so the next sweep can skip the expensive search,
@@ -249,8 +283,10 @@ async function processCompany(company: CompanyRow, force: boolean): Promise<stri
       `${closed ? `, ${closed} closed` : ''} via ${source}${needsLlm ? ' [needs-llm]' : ''}`;
   } catch (err) {
     // Credentials are wrong: let the run abort rather than recording this
-    // company as an error it could recover from on a retry.
-    if (isAuthError(err)) throw err;
+    // company as an error it could recover from on a retry. An LLM with no
+    // credit left is the same kind of failure — it cannot be recorded as a
+    // fact about this company, because nothing about this company was learnt.
+    if (isAuthError(err) || isLlmUnavailable(err)) throw err;
     let msg = err instanceof Error ? err.message : String(err);
     const cause = (err as any)?.cause;
     if (cause) msg += ` — cause: ${cause.message ?? cause.code ?? cause}`;
@@ -307,6 +343,31 @@ function explainEmptySelection(opts: SearchOpts, params: number[]): string {
       : 'Nothing to search: no companies loaded yet. Add a company list first.';
   }
 
+  // A scope made entirely of parked companies reports "all checked recently",
+  // which is both wrong and unactionable — they were skipped for a quite
+  // different reason, and --force will not bring them back.
+  // Only the states that actually stop the crawl can explain an empty
+  // selection; a company merely flagged for review was still visited.
+  const parked = Object.fromEntries(
+    Object.entries(dormantCounts(opts.listIds)).filter(([state]) => skipsCrawl(state)),
+  );
+  const parkedTotal = Object.values(parked).reduce((a, b) => a + b, 0);
+  if (parkedTotal > 0 && !opts.includeDormant) {
+    const breakdown = Object.entries(parked)
+      .map(([state, n]) => `${n} ${state.replace(/_/g, ' ')}`)
+      .join(', ');
+    const rest = inScope - parkedTotal;
+    return (
+      `Nothing to search: ${parkedTotal} of the ${inScope} companies in scope are parked ` +
+      `(${breakdown})` +
+      (rest > 0
+        ? `, and the other ${rest} were checked within the last ${config.checkTtlDays} days. ` +
+          `Pass --force to re-check those`
+        : `. Pass --include-dormant to crawl them anyway`) +
+      `, or run \`job dormant\` to review why they were parked.`
+    );
+  }
+
   return (
     `Nothing to search: all ${inScope} companies in scope were checked within the last ` +
     `${config.checkTtlDays} days. Pass --force to re-check them anyway.`
@@ -342,6 +403,8 @@ export async function runSearcher(opts: SearchOpts = {}): Promise<SearchRunResul
           OR last_checked_at < datetime('now', '-${Number(config.checkTtlDays)} days'))`,
         unresolvedBackoffClause(),
       ];
+  // Survives `force` on purpose — see `includeDormant`.
+  if (!opts.includeDormant) clauses.push(activeCompanyClause());
   const params: number[] = [];
   if (opts.listIds?.length) {
     clauses.push(
@@ -398,7 +461,7 @@ export async function runSearcher(opts: SearchOpts = {}): Promise<SearchRunResul
         else processed++;
         opts.onCompany?.(processed + skipped, companies.length);
       } catch (err) {
-        if (isAuthError(err)) {
+        if (isAuthError(err) || isLlmUnavailable(err)) {
           authFailure = err;
           queue.clear();
           return;
@@ -409,9 +472,18 @@ export async function runSearcher(opts: SearchOpts = {}): Promise<SearchRunResul
   );
 
   if (authFailure) {
+    const msg = authFailure instanceof Error ? authFailure.message : String(authFailure);
+    if (isLlmUnavailable(authFailure)) {
+      throw new Error(
+        `The LLM stopped serving requests, so the run was halted after ${processed} ` +
+          `compan${processed === 1 ? 'y' : 'ies'}: ${msg}\n` +
+          `Careers-page resolution depends on it, and without it every remaining company ` +
+          `would be recorded as having no careers page. Top up or fix the key, then re-run — ` +
+          `the companies not yet visited were left untouched.`,
+      );
+    }
     throw new Error(
-      `BrightData rejected the credentials, so nothing was searched: ` +
-        `${authFailure instanceof Error ? authFailure.message : String(authFailure)}\n` +
+      `BrightData rejected the credentials, so nothing was searched: ${msg}\n` +
         `Check BRIGHTDATA_API_KEY in .env — the companies were left untouched for a re-run.`,
     );
   }

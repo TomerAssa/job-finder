@@ -65,6 +65,14 @@ export const config = {
     // Hard monthly cap on billable requests (0 = disabled). Keeps you under the
     // 5,000 free-tier credits by default; counted in Redis per calendar month.
     monthlyLimit: num('BRIGHTDATA_MONTHLY_LIMIT', 4800),
+    /** Hard ceiling on a single request. There used to be none; see client.ts. */
+    timeoutMs: num('BRIGHTDATA_TIMEOUT_MS', 45_000),
+    /**
+     * Shorter budget for speculative fetches — probing conventional careers
+     * paths on a company's own domain. A domain that has not answered in this
+     * long is not worth the wait when there are two more paths to try.
+     */
+    probeTimeoutMs: num('BRIGHTDATA_PROBE_TIMEOUT_MS', 20_000),
   },
   redisUrl: process.env.REDIS_URL ?? 'redis://127.0.0.1:6379',
   llm: {
@@ -73,7 +81,8 @@ export const config = {
       | 'gemini'
       | 'ollama'
       | 'anthropic'
-      | 'openai',
+      | 'openai'
+      | 'claude-code',
     geminiKey: geminiKey(),
     geminiModel: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
     // Requests/minute cap. Free tier ≈ 15; raise to 1000+ once billing is enabled.
@@ -84,6 +93,16 @@ export const config = {
     anthropicModel: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6',
     openaiKey: process.env.OPENAI_API_KEY ?? '',
     openaiModel: process.env.OPENAI_MODEL ?? 'gpt-4o',
+    /**
+     * The installed Claude Code CLI as a model backend — a stopgap for having
+     * no working API key. Charged to the user's Claude account, so concurrency
+     * is capped well below `searchConcurrency`: each call is a whole process,
+     * and a crawl at ten at once would burn a usage limit fast.
+     */
+    claudeCodeBin: process.env.CLAUDE_CODE_BIN ?? 'claude',
+    claudeCodeModel: process.env.CLAUDE_CODE_MODEL ?? 'haiku',
+    claudeCodeConcurrency: num('CLAUDE_CODE_CONCURRENCY', 3),
+    claudeCodeTimeoutMs: num('CLAUDE_CODE_TIMEOUT_MS', 120_000),
   },
   // Use the LLM (Gemini) to parse careers pages that have no structured data.
   searchUseLlm: (process.env.SEARCH_USE_LLM ?? 'true').toLowerCase() !== 'false',
@@ -103,6 +122,13 @@ export const config = {
    */
   defaultLocation: (process.env.DEFAULT_LOCATION ?? 'Israel').trim(),
   searchConcurrency: num('SEARCH_CONCURRENCY', 4),
+  /**
+   * Conventional careers paths tried on a company's own domain before falling
+   * back to searching. Each is a billable request, but it replaces two SERP
+   * queries plus an LLM pick, so three is still cheaper than the search path it
+   * short-circuits.
+   */
+  careersProbePaths: num('CAREERS_PROBE_PATHS', 3),
   responseCacheHours: num('RESPONSE_CACHE_HOURS', 72),
 };
 

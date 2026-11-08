@@ -13,6 +13,7 @@
 import { db, now } from '../../db/client.js';
 import { monthlyUsage } from '../../brightdata/client.js';
 import { runSearcher, unresolvedBackoffClause } from './index.js';
+import { activeCompanyClause } from '../../db/lifecycle.js';
 import { runEnrich } from '../enrich/index.js';
 import { fetchPostingDetails } from '../enrich/fetchDetails.js';
 import { config } from '../../config.js';
@@ -23,6 +24,7 @@ export interface CrawlRunRow {
   target_companies: number | null;
   credit_limit: number | null;
   force: number;
+  include_dormant: number;
   status: 'running' | 'done' | 'stopped' | 'error';
   /** searching | reading | finished — what it is doing right now. */
   phase: string;
@@ -45,6 +47,8 @@ export interface StartOptions {
   /** Stop once this many credits have gone. Null means no ceiling of its own. */
   creditLimit?: number | null;
   force?: boolean;
+  /** Also visit companies parked as closed / out of scope / no web presence. */
+  includeDormant?: boolean;
 }
 
 /** How often the expensive parts of progress are recomputed, in ms. */
@@ -55,14 +59,17 @@ const scope = (sectors: number[]) =>
   `IN (SELECT company_id FROM company_list_members WHERE list_id IN (${sectors.map(() => '?').join(',')}))`;
 
 /** Companies a run would still visit: never checked, or stale again. */
-export function dueCount(sectors: number[], force = false): number {
+export function dueCount(sectors: number[], force = false, includeDormant = false): number {
   const clause = force
     ? '1=1'
     : `(last_checked_at IS NULL OR last_checked_at < datetime('now','-${Number(config.checkTtlDays)} days'))
        AND ${unresolvedBackoffClause()}`;
+  // Must match `runSearcher`'s selection exactly, parked companies included, or
+  // the progress bar counts companies the run goes on to skip.
+  const dormant = includeDormant ? '1=1' : activeCompanyClause();
   return (
     db()
-      .prepare(`SELECT COUNT(*) c FROM companies WHERE id ${scope(sectors)} AND ${clause}`)
+      .prepare(`SELECT COUNT(*) c FROM companies WHERE id ${scope(sectors)} AND ${clause} AND ${dormant}`)
       .get(...sectors) as { c: number }
   ).c;
 }
@@ -155,20 +162,22 @@ export function startRun(opts: StartOptions): CrawlRunRow {
   if (existing) throw new Error(`A crawl is already running (run ${existing.id}). Stop it first.`);
   if (!opts.sectors.length) throw new Error('Pick at least one sector to search');
 
-  const due = dueCount(opts.sectors, opts.force);
+  const due = dueCount(opts.sectors, opts.force, opts.includeDormant);
   const total = opts.targetCompanies != null ? Math.min(opts.targetCompanies, due) : due;
 
   const info = db()
     .prepare(
       `INSERT INTO crawl_runs
-         (sectors_json, target_companies, credit_limit, force, companies_total, started_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         (sectors_json, target_companies, credit_limit, force, include_dormant,
+          companies_total, started_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       JSON.stringify(opts.sectors),
       opts.targetCompanies ?? null,
       opts.creditLimit ?? null,
       opts.force ? 1 : 0,
+      opts.includeDormant ? 1 : 0,
       total,
       now(),
       now(),
@@ -189,6 +198,7 @@ async function execute(id: number): Promise<void> {
   const run = getRun(id)!;
   const sectors = JSON.parse(run.sectors_json) as number[];
   const force = run.force === 1;
+  const includeDormant = run.include_dormant === 1;
 
   const base = stats(sectors);
   const creditsAtStart = await usage();
@@ -207,7 +217,7 @@ async function execute(id: number): Promise<void> {
   const current = getRun(id)!;
   const target = current.companies_total;
 
-  if (target > 0 && dueCount(sectors, force) > 0) {
+  if (target > 0 && dueCount(sectors, force, includeDormant) > 0) {
     // One queue for the whole run, not a batch at a time. Companies take
     // anywhere from a few seconds to a few minutes, so draining the queue
     // between batches left most workers idle waiting on the slowest member of
@@ -217,6 +227,7 @@ async function execute(id: number): Promise<void> {
       listIds: sectors,
       limit: target,
       force,
+      includeDormant,
       // Both callbacks sit on the critical path of every company, so neither
       // does more work than it has to. The counter is always current; the
       // aggregate counts and the Redis spend lookup are refreshed on a timer,

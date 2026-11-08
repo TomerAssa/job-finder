@@ -5,7 +5,8 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { tokenMatches, isJobBoardHost } from './resolveCareers.js';
+import { tokenMatches } from './resolveCareers.js';
+import { isJobBoardHost } from '../../util/hosts.js';
 import { normalizeCompany } from '../../util/normalize.js';
 
 const matches = (company: string, slug: string) => tokenMatches(normalizeCompany(company), slug);

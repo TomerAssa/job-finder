@@ -2,7 +2,7 @@ import PQueue from 'p-queue';
 import { z } from 'zod';
 import { db, now } from '../../db/client.js';
 import { startLog, finishLog } from '../../db/checkLog.js';
-import { extract } from '../../llm/provider.js';
+import { extract, getProvider } from '../../llm/provider.js';
 import { normalizeCountry } from '../../util/country.js';
 
 const ENRICH_CONCURRENCY = 6;
@@ -57,7 +57,7 @@ async function enrichOne(job: JobRow): Promise<Enrichment> {
   );
 }
 
-/** Normalize positions into the position_requirements table via Gemini (structured). */
+/** Normalize positions into the position_requirements table via the configured LLM. */
 export async function runEnrich(opts: { limit?: number; force?: boolean; all?: boolean } = {}): Promise<void> {
   // By default only enrich Product Manager positions (the user's sole target).
   const clauses: string[] = [];
@@ -80,7 +80,9 @@ export async function runEnrich(opts: { limit?: number; force?: boolean; all?: b
     return;
   }
 
-  console.log(`🧠 Enriching ${jobs.length} positions via Gemini (concurrency ${ENRICH_CONCURRENCY})…`);
+  console.log(
+    `🧠 Enriching ${jobs.length} positions via ${getProvider().name} (concurrency ${ENRICH_CONCURRENCY})…`,
+  );
   const logId = startLog('enrich', null);
   const upsert = db().prepare(
     `INSERT INTO position_requirements

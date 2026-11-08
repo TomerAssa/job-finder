@@ -2,41 +2,17 @@ import { z } from 'zod';
 import { config } from '../../config.js';
 import { isAuthError } from '../../brightdata/client.js';
 import { serpSearch, type SerpResult } from '../../brightdata/serp.js';
-import { extract } from '../../llm/provider.js';
+import { extract, isLlmUnavailable } from '../../llm/provider.js';
 import { normalizeCompany, similarity } from '../../util/normalize.js';
 import { detectAts } from './ats/detect.js';
+import { hostLooksLikeCompany, hostOf, isJobBoardHost } from '../../util/hosts.js';
+import { probeCareersOnDomain } from './probeDomain.js';
+import { probeAtsBySlug } from './atsSlug.js';
+import { fetchPage } from '../../brightdata/unlocker.js';
 import type { Resolved } from './types.js';
 
 const NON_COMPANY_HOSTS =
   /linkedin\.|facebook\.|twitter\.|x\.com|glassdoor\.|crunchbase\.|wikipedia\.|comparably\.|indeed\.|ziprecruiter\./i;
-
-/**
- * Hosts that list many companies' jobs, so a page on one is never *this*
- * company's careers page.
- *
- * Accepting one is not a cosmetic error: whatever roles the page happens to
- * show get scraped and filed under this company. That is how three openings at
- * Cyble arrived labelled "Cybool" — the resolver picked a LinkedIn jobs page
- * for a similarly-named company and an LLM read it as if it were the careers
- * site. Venture portfolio boards are the same trap wearing a company's domain.
- */
-const JOB_BOARD_HOSTS =
-  /linkedin\.|glassdoor\.|indeed\.|ziprecruiter\.|dice\.com|monster\.|wellfound\.|angel\.co|builtin\.|allremote\.|secretjobs\.|techaviv\.|crunchbase\.|portfoliojobs\.|\.vc$|\.vc\//i;
-
-/** True when a URL lives on a multi-company job board rather than a company's own site or ATS. */
-export function isJobBoardHost(url: string): boolean {
-  let host: string;
-  try {
-    host = new URL(url).hostname;
-  } catch {
-    return false;
-  }
-  // A venture fund's board is usually jobs.<fund>.com listing its portfolio.
-  if (/^jobs\.(insightpartners|initialized|f2vc|jvpvc|decibel|greylock|sequoiacap|a16z|bvp|lightspeedvp)\./i.test(host)) {
-    return true;
-  }
-  return JOB_BOARD_HOSTS.test(host);
-}
 
 const Select = z.object({ careers_url: z.string().nullable(), reason: z.string().optional() });
 
@@ -92,6 +68,56 @@ export async function resolveCareers(name: string, opts: ResolveOpts = {}): Prom
   const norm = normalizeCompany(name);
   const seen = new Map<string, SerpResult>();
   let website = opts.hintDomain ?? null;
+
+  // Cheapest first: ask the ATSes directly whether they host a board under a
+  // slug this company could own. These are public JSON APIs called without the
+  // proxy, so a miss costs nothing at all — no credits, no search, no LLM.
+  const board = await probeAtsBySlug(name);
+  if (board.careersUrl) {
+    return {
+      careersUrl: board.careersUrl,
+      atsType: board.atsType,
+      token: board.token,
+      websiteUrl: website,
+    };
+  }
+
+  // Then the company's own domain, when we have one that is plausibly
+  // theirs. This is both cheaper and far more reliable than searching: see
+  // probeDomain.ts for what the SERP layer actually returns now. Only a domain
+  // that matches the company's name is used — `website_url` is frequently the
+  // first non-social host a search returned, and probing google.com for
+  // Aidoc's careers page would be worse than not probing at all.
+  if (website && !isJobBoardHost(website) && hostLooksLikeCompany(hostOf(website), name, similarity)) {
+    const probed = await probeCareersOnDomain(website, {
+      // A short budget: these are speculative fetches against domains that are
+      // often parked or dead, and waiting 45s on each of three paths is what
+      // turned a two-hour crawl into a nine-hour one.
+      fetch: (url) => fetchPage(url, { timeoutMs: config.brightData.probeTimeoutMs }),
+      maxPaths: config.careersProbePaths,
+      companyName: name,
+    });
+    // Their domain now serves somebody else. Report that rather than searching
+    // on: no amount of searching will find a careers page for a company that
+    // has been absorbed, and the acquirer is the useful answer.
+    if (probed.acquiredBy) {
+      return {
+        careersUrl: null,
+        atsType: 'unknown',
+        websiteUrl: probed.websiteUrl ?? website,
+        acquiredBy: probed.acquiredBy,
+        sawBrand: probed.sawBrand,
+      };
+    }
+    if (probed.careersUrl) {
+      return {
+        careersUrl: probed.careersUrl,
+        atsType: probed.atsType,
+        token: probed.token,
+        websiteUrl: probed.websiteUrl ?? website,
+      };
+    }
+  }
 
   const queries = [
     `${name} careers jobs`,
@@ -174,7 +200,11 @@ async function geminiPick(
     // here than to scrape a stranger's openings into this company's row.
     if (isJobBoardHost(url)) return null;
     return candidates.some((c) => c.url === url) ? url : null;
-  } catch {
+  } catch (err) {
+    // A dead LLM is not a company without a careers page. Swallowing this is
+    // how 239 companies came to be recorded as unresolved, and backed off for
+    // 45 days, during a run in which the Gemini account had no credit left.
+    if (isLlmUnavailable(err)) throw err;
     return null;
   }
 }

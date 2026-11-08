@@ -3,7 +3,7 @@ import XLSX from 'xlsx';
 import { z } from 'zod';
 import { db, now } from '../../db/client.js';
 import { similarity } from '../../util/normalize.js';
-import { extract } from '../../llm/provider.js';
+import { extract, getProvider } from '../../llm/provider.js';
 import {
   upsertPerson, findPersonByName, addIntroduction, logInteraction,
 } from '../../db/people.js';
@@ -220,7 +220,7 @@ export async function runImportTracker(leadsPath: string, positionsPath: string)
   } else console.warn(`⚠️  Leads file not found: ${leadsPath}`);
 
   if (existsSync(positionsPath)) {
-    console.log('🧩 Parsing per-role contact paths via Gemini…');
+    console.log(`🧩 Parsing per-role contact paths via ${getProvider().name}…`);
     const r = await importPositions(positionsPath);
     console.log(`📌 Roles tracked: ${r.tracked}; outreach paths: ${r.paths}`);
   } else console.warn(`⚠️  Positions file not found: ${positionsPath}`);

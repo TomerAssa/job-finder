@@ -1,11 +1,19 @@
 #!/usr/bin/env -S npx tsx
 import { existsSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
 import { Command } from 'commander';
 import { paths, config } from './config.js';
 import { db, initDb } from './db/client.js';
 import { closeRedis } from './redis.js';
 import { ingestConnections } from './ingest/connections.js';
 import { ingestCompanyList, listSectors } from './ingest/companyLists.js';
+import {
+  careersGap, listDormant, markAcquired, markLive, scanAcquisitions, scanAggregatorOnly,
+  scanDeadDomains, scanForNoWebPresence, seedFromRemovalCsv, skipsCrawl, syncLifecycleLists,
+} from './db/lifecycle.js';
+import { fetchPage } from './brightdata/unlocker.js';
+import { writeCsv } from './util/csv.js';
+import { backfillDomains } from './ingest/domains.js';
 import { runSearcher, resetNoPmCompanies } from './agents/searcher/index.js';
 import { reclassifyPositions } from './agents/searcher/reclassify.js';
 import { startRun, getRun } from './agents/searcher/crawlRun.js';
@@ -140,6 +148,7 @@ program
   .option('--limit <n>', 'process at most N companies', (v) => parseInt(v, 10))
   .option('--sector <names>', 'restrict to these company lists (comma-separated, or ids)')
   .option('--force', 'ignore freshness cache and re-check everything', false)
+  .option('--include-dormant', 'also visit companies parked as closed / no web presence', false)
   .action((o) => {
     let listIds: number[] | undefined;
     if (o.sector) {
@@ -147,7 +156,9 @@ program
       const scope = listSectors().filter((l) => listIds!.includes(l.id));
       console.log(`🔎 Scope: ${scope.map((l) => `${l.name} (${l.companies})`).join(' | ')}`);
     }
-    return runSearcher({ limit: o.limit, force: o.force, listIds }).then(() => undefined);
+    return runSearcher({
+      limit: o.limit, force: o.force, listIds, includeDormant: o.includeDormant,
+    }).then(() => undefined);
   });
 
 // ── crawl (long background-style run, also usable headless) ──
@@ -158,6 +169,7 @@ program
   .option('--companies <n>', 'stop after this many companies', (v) => parseInt(v, 10))
   .option('--credits <n>', 'stop once this many credits are spent', (v) => parseInt(v, 10))
   .option('--force', 're-check even recently-checked companies', false)
+  .option('--include-dormant', 'also visit companies parked as closed / no web presence', false)
   .action(async (o) => {
     db();
     const ids = resolveSectors(String(o.sector));
@@ -166,6 +178,7 @@ program
       targetCompanies: o.companies ?? null,
       creditLimit: o.credits ?? null,
       force: o.force,
+      includeDormant: o.includeDormant,
     });
     console.log(`▶ run ${run.id}: up to ${run.companies_total} companies`);
     for (;;) {
@@ -251,6 +264,241 @@ program
     if (r.removedExamples.length) console.log(`   dropped:      ${r.removedExamples.join(' · ')}`);
   });
 
+// ── backfill-domains ──
+program
+  .command('backfill-domains')
+  .description("Fill companies.website_url from a source CSV's real websites (free; no requests).")
+  .argument('[csv]', 'CSV with Name and Website columns', 'data/input/expansion-sources.csv')
+  .option('--dry-run', 'report what would change without writing', false)
+  .action((csvArg, o) => {
+    db();
+    const path = resolve(csvArg);
+    if (!existsSync(path)) throw new Error(`No CSV at ${path}.`);
+    const r = backfillDomains(path, { dryRun: o.dryRun });
+    console.log(
+      `🌐 ${basename(path)}: ${r.rows} rows, ${r.matched} matched a known company\n` +
+        `   ${o.dryRun ? 'would fill' : 'filled'} ${r.filled} empty · ` +
+        `${o.dryRun ? 'would correct' : 'corrected'} ${r.replaced} that were not the company's · ` +
+        `${r.kept} already right · ${r.unusable} CSV rows had no usable host · ${r.unmatched} unknown companies`,
+    );
+    for (const e of r.examples) console.log(`      ${e.name}: ${e.from} → ${e.to}`);
+  });
+
+// ── dormant (the skip lists: closed / no web presence / out of scope) ──
+program
+  .command('dormant')
+  .description('Review and maintain the companies a crawl should skip or you should check by hand.')
+  .option('--scan', 'flag companies a crawl found no website or careers page for', false)
+  .option('--dns', 'park companies whose own domain no longer resolves (free; no credits)', false)
+  .option('--aggregators', 'flag companies known only by somebody else\'s job board', false)
+  .option('--attempts <n>', 'DNS lookups per host before ruling it dead', (v) => parseInt(v, 10), 2)
+  .option('--limit <n>', 'check at most N hosts (with --dns)', (v) => parseInt(v, 10))
+  .option('--seed [csv]', 'import a vetting CSV of removed companies (List,Name,Reason,Evidence)')
+  .option('--mark-live <name>', 'a manual check found this company alive — put it back in the queue')
+  .option('--acquired', 'detect companies whose own site now serves another brand (billable)', false)
+  .option('--include-closed', 'with --acquired, re-examine companies already parked as closed', false)
+  .option('--mark-acquired <name>', 'record an acquisition by hand (needs --by)')
+  .option('--by <acquirer>', 'who acquired it (with --mark-acquired)')
+  .option('--evidence <text>', 'what the manual check saw (stored with --mark-live)')
+  .option('--state <state>', 'show only one state: suspected_closed | no_web_presence | out_of_scope')
+  .option('--csv <path>', 'write the list to a CSV')
+  .option('--dry-run', 'report what would change without writing', false)
+  .action(async (o) => {
+    db();
+
+    if (o.markLive) {
+      const row = markLive(String(o.markLive), String(o.evidence ?? 'Checked by hand; the company exists.'));
+      if (!row) {
+        throw new Error(
+          `No company called "${o.markLive}". Names are matched after normalization — ` +
+            `run \`job dormant\` to see the parked ones exactly as they are stored.`,
+        );
+      }
+      console.log(`✅ ${row.name} marked live by hand — it will be crawled again and no scan can park it.`);
+    }
+
+    if (o.markAcquired) {
+      if (!o.by) throw new Error('--mark-acquired needs --by <acquirer>: the point of the flag is where the jobs went.');
+      const row = markAcquired(String(o.markAcquired), String(o.by), o.evidence ? String(o.evidence) : undefined);
+      if (!row) throw new Error(`No company called "${o.markAcquired}".`);
+      console.log(`→ ${row.name} recorded as acquired by ${row.lifecycle_successor}. It will not be crawled or shown as closed.`);
+    }
+
+    if (o.acquired) {
+      const r = await scanAcquisitions({
+        fetch: (url) => fetchPage(url, { timeoutMs: config.brightData.probeTimeoutMs }),
+        limit: o.limit,
+        dryRun: o.dryRun,
+        includeClosed: o.includeClosed,
+      });
+      console.log(
+        `→ Checked ${r.checked} site(s): ${o.dryRun ? 'would flag' : 'flagged'} ${r.flagged} as acquired · ` +
+          `${r.inconclusive} named nobody, so nothing was concluded · ` +
+          `${r.skippedUnverifiedHost} skipped (stored host is not demonstrably theirs)`,
+      );
+      if (r.keptUserDecision) console.log(`   ${r.keptUserDecision} left alone — you had already ruled on them`);
+      for (const f of r.found) console.log(`      ${f.name} → ${f.successor}`);
+    }
+
+    if (o.seed !== undefined) {
+      const path = typeof o.seed === 'string' ? o.seed : resolve(paths.inputDir, 'expansion-removed.csv');
+      if (!existsSync(path)) throw new Error(`No vetting CSV at ${path}.`);
+      const r = seedFromRemovalCsv(path, { dryRun: o.dryRun });
+      console.log(
+        `${o.dryRun ? '🔍 Would park' : '🅿️  Parked'} ${r.flagged} of ${r.rows} rows from ${basename(path)} ` +
+          `(${r.inserted} not previously in the database)`,
+      );
+      if (r.keptUserDecision) console.log(`   ${r.keptUserDecision} left alone — you had already ruled on them`);
+      if (r.unmapped.length) {
+        console.log(`   ⚠️  ${r.unmapped.length} row(s) with a reason this does not know, so left unparked:`);
+        for (const u of r.unmapped.slice(0, 10)) console.log(`      ${u.name} — "${u.reason}"`);
+      }
+    }
+
+    if (o.scan) {
+      const r = scanForNoWebPresence({ dryRun: o.dryRun });
+      console.log(
+        `${o.dryRun ? '🔍 Would flag' : '🔖 Flagged'} ${o.dryRun ? r.candidates : r.flagged} crawled ` +
+          `companies with no website and no careers page — for a manual check; they are still crawled`,
+      );
+      if (r.keptUserDecision) console.log(`   ${r.keptUserDecision} left alone — you had already ruled on them`);
+      for (const e of r.examples) console.log(`      ${e.name}${e.checkedAt ? ` (checked ${e.checkedAt.slice(0, 10)})` : ''}`);
+      if (r.candidates > r.examples.length) console.log(`      … and ${r.candidates - r.examples.length} more`);
+    }
+
+    if (o.dns) {
+      const r = await scanDeadDomains({
+        limit: o.limit, attempts: o.attempts, dryRun: o.dryRun,
+      });
+      console.log(
+        `🌐 Checked ${r.checked} domain(s): ${r.alive} alive · ${r.dead} dead · ${r.unknown} inconclusive`,
+      );
+      console.log(
+        `   ${o.dryRun ? 'Would park' : 'Parked'} ${r.dead} as suspected closed. ` +
+          `Inconclusive lookups are left alone — a timeout is not a dead company.`,
+      );
+      if (r.keptUserDecision) console.log(`   ${r.keptUserDecision} left alone — you had already ruled on them`);
+      for (const e of r.examples) console.log(`      ${e.name} — ${e.host}`);
+    }
+
+    if (o.aggregators) {
+      const r = scanAggregatorOnly({ dryRun: o.dryRun });
+      const n = o.dryRun ? r.candidates : r.flagged;
+      console.log(
+        `🧩 ${o.dryRun ? 'Would flag' : 'Flagged'} ${n} compan${n === 1 ? 'y' : 'ies'} known only by a ` +
+          `job board — for a manual check; they are still crawled`,
+      );
+      for (const e of r.examples) console.log(`      ${e.name}`);
+    }
+
+    // The browsable lists are derived from the column every time the command
+    // runs, not only when it writes: a flag set anywhere else — a hand UPDATE,
+    // the web console — would otherwise leave them silently stale.
+    if (!o.dryRun) {
+      const lists = syncLifecycleLists();
+      if (o.scan || o.dns || o.aggregators || o.seed !== undefined || o.markLive) {
+        console.log(
+          `📋 Lists updated: ${Object.entries(lists).map(([n, c]) => `${n} (${c})`).join(' · ') || 'none'}`,
+        );
+      }
+    }
+
+    const acted = !!(o.scan || o.dns || o.aggregators || o.acquired || o.seed !== undefined || o.markLive || o.markAcquired);
+    const rows = listDormant({ state: o.state });
+    const byState = rows.reduce<Record<string, number>>((acc, r) => {
+      acc[r.lifecycle] = (acc[r.lifecycle] ?? 0) + 1;
+      return acc;
+    }, {});
+    const skipped = rows.filter((r) => skipsCrawl(r.lifecycle)).length;
+    console.log(
+      `\n🅿️  ${rows.length} flagged compan${rows.length === 1 ? 'y' : 'ies'}` +
+        (rows.length
+          ? `: ${Object.entries(byState).map(([st, c]) => `${c} ${st.replace(/_/g, ' ')}`).join(', ')}` +
+            `\n   ${skipped} skipped by future crawls · ${rows.length - skipped} still crawled, flagged for a manual check`
+          : ''),
+    );
+    for (const r of acted ? [] : rows.slice(0, 25)) {
+      console.log(
+        `   ${r.lifecycle_source === 'user' ? '✋' : '  '} ${r.name} — ${r.lifecycle_reason}` +
+          `${r.employees ? ` · ${r.employees}` : ''}${r.lifecycle_evidence ? ` · ${r.lifecycle_evidence.slice(0, 90)}` : ''}`,
+      );
+    }
+    if (!acted && rows.length > 25) {
+      console.log(`   … and ${rows.length - 25} more (use --csv to see them all)`);
+    }
+
+    if (o.csv) {
+      const n = writeCsv(
+        o.csv,
+        rows.map((r) => ({
+          name: r.name,
+          state: r.lifecycle,
+          reason: r.lifecycle_reason,
+          successor: r.lifecycle_successor,
+          skipped_by_crawls: skipsCrawl(r.lifecycle) ? 'yes' : 'no',
+          decided_by: r.lifecycle_source,
+          decided_at: r.lifecycle_at,
+          employees: r.employees,
+          sector: r.sector,
+          website: r.website_url,
+          evidence: r.lifecycle_evidence,
+        })),
+      );
+      console.log(`📝 Wrote ${n} row(s) to ${o.csv}`);
+    }
+  });
+
+// ── careers-gap (real companies whose openings we cannot see) ──
+program
+  .command('careers-gap')
+  .description('Companies that exist but whose careers page was never found — the manual-dive queue.')
+  .option('--sector <names>', 'restrict to these company lists (comma-separated, or ids)')
+  .option('--big', 'only companies of 51+ employees', false)
+  .option('--csv <path>', 'write the list to a CSV')
+  .action((o) => {
+    db();
+    const listIds = o.sector ? resolveSectors(String(o.sector)) : undefined;
+    const rows = careersGap({ listIds, minEmployees: o.big });
+    console.log(
+      `🔎 ${rows.length} compan${rows.length === 1 ? 'y' : 'ies'} with a website but no careers page` +
+        `${o.big ? ' (51+ employees)' : ''}`,
+    );
+    const bySize = rows.reduce<Record<string, number>>((acc, r) => {
+      const k = r.employees ?? 'unknown';
+      acc[k] = (acc[k] ?? 0) + 1;
+      return acc;
+    }, {});
+    console.log(`   by size: ${Object.entries(bySize).map(([k, v]) => `${k}: ${v}`).join(' · ')}`);
+    const own = rows.filter((r) => r.own_site).length;
+    console.log(
+      `   ${own} have a host that matches their name — start there. The other ${rows.length - own} ` +
+        `only ever returned somebody else's host, so the URL below is a lead, not their site.`,
+    );
+    for (const r of rows.slice(0, 25)) {
+      console.log(
+        `   ${r.own_site ? '✓' : '?'} ${r.name}${r.employees ? ` · ${r.employees}` : ''} · ${r.website_url}` +
+          `${r.needs_llm ? ' [needs-llm]' : ''}${r.positions ? ` · ${r.positions} position(s) already known` : ''}`,
+      );
+    }
+    if (rows.length > 25) console.log(`   … and ${rows.length - 25} more (use --csv to see them all)`);
+    if (o.csv) {
+      const n = writeCsv(
+        o.csv,
+        rows.map((r) => ({
+          name: r.name,
+          employees: r.employees,
+          sector: r.sector,
+          website: r.website_url,
+          website_matches_name: r.own_site ? 'yes' : 'no',
+          last_checked: r.last_checked_at,
+          positions_known: r.positions,
+          needs_llm: r.needs_llm,
+        })),
+      );
+      console.log(`📝 Wrote ${n} row(s) to ${o.csv}`);
+    }
+  });
+
 // ── export-new (xlsx of newly scraped Israel PM roles) ──
 program
   .command('export-new')
@@ -319,7 +567,7 @@ program
 // ── enrich ──
 program
   .command('enrich')
-  .description('Normalize PM positions into structured, filterable fields (seniority, skills, …) via Gemini.')
+  .description('Normalize PM positions into structured, filterable fields (seniority, skills, …) via the configured LLM.')
   .option('--limit <n>', 'enrich at most N positions', (v) => parseInt(v, 10))
   .option('--all', 'enrich ALL positions, not just Product Manager roles', false)
   .option('--force', 're-enrich positions that already have requirements', false)
