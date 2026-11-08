@@ -6,7 +6,7 @@ import { listNameFromFile } from '../ingest/companyLists.js';
 describe('the product-manager profile', () => {
   test('matches product management in its many flavours', () => {
     for (const t of [
-      'Product Manager', 'Senior Product Manager', 'Group Product Manager',
+      'Product Manager',
       'Technical Product Manager', 'Product Owner', 'AI Product Manager',
       'Associate Product Manager', 'Product Lead',
       // Increasingly how startups advertise a hands-on PM role.
@@ -108,7 +108,7 @@ describe('company list naming', () => {
 describe('the widened target profile', () => {
   test('matches the solutions family', () => {
     for (const t of [
-      'Solutions Engineer', 'Solution Engineer', 'Senior Solutions Engineer',
+      'Solutions Engineer', 'Solution Engineer', 'Staff Solutions Engineer',
       'Solutions Architect', 'Cloud Solutions Architect',
       'Solutions Consultant', 'Solutions Manager',
     ]) {
@@ -126,7 +126,9 @@ describe('the widened target profile', () => {
 
   test('matches a technical product manager', () => {
     assert.equal(isProductManager('Technical Product Manager'), true);
-    assert.equal(isProductManager('Senior Technical Product Manager'), true);
+    // "Senior" is now an exclude, so only the plain form survives — see the
+    // seniority block below.
+    assert.equal(isProductManager('Senior Technical Product Manager'), false);
   });
 
   test('matches automation roles but not QA test automation', () => {
@@ -143,9 +145,14 @@ describe('the widened target profile', () => {
     }
   });
 
-  test('matches forward deployed engineering', () => {
+  test('matches forward deployed engineering, below principal level', () => {
     assert.equal(isProductManager('Forward Deployed Engineer'), true);
-    assert.equal(isProductManager('Principal Software Engineer, Applied AI (Forward Deployed)'), true);
+    assert.equal(isProductManager('Forward Deployed Software Engineer'), true);
+    // Was asserted to match. The seniority ceiling now wins: "principal is
+    // always too senior for me". Most forward-deployed postings in this data
+    // are Principal/Staff/Senior, so this narrows that avenue a lot — reverse
+    // by excluding the phrase 'principal product' instead of bare 'principal'.
+    assert.equal(isProductManager('Principal Software Engineer, Applied AI (Forward Deployed)'), false);
   });
 
   test('still refuses the executive tier and the adjacent product roles', () => {
@@ -155,5 +162,76 @@ describe('the widened target profile', () => {
     ]) {
       assert.equal(isProductManager(t), false, t);
     }
+  });
+});
+
+describe('seniority and geography exclusions', () => {
+  test('drops anything senior', () => {
+    for (const t of [
+      'Senior Product Manager', 'Senior Solutions Engineer',
+      'Senior Data Product Manager, AI', 'Sr. Product Manager',
+      'Senior Enterprise Solution Architect',
+    ]) {
+      assert.equal(isProductManager(t), false, t);
+    }
+  });
+
+  test('drops team leads and partner roles', () => {
+    for (const t of [
+      'Automation Team Lead', 'Product Team Leader',
+      'Senior Partner Solutions Architect', 'Partner Solutions Manager',
+    ]) {
+      assert.equal(isProductManager(t), false, t);
+    }
+  });
+
+  test('drops roles whose title places them outside Israel', () => {
+    // Real titles from the scraped data. Regions, not countries, are what
+    // titles actually carry.
+    for (const t of [
+      'CSM EMEA', 'Senior Pre-Sales Solution Engineer - APAC',
+      'Customer Success Manager - International',
+      'Automation Team Lead, India', 'Product Manager - Germany',
+    ]) {
+      assert.equal(isProductManager(t), false, t);
+    }
+  });
+
+  test('keeps the plain roles that remain', () => {
+    for (const t of [
+      'Product Manager', 'Technical Product Manager', 'Product Manager, AI',
+      'Solutions Engineer', 'Customer Success Manager', 'Automation Engineer',
+      'Product Manager - Data Security', 'Product Manager (Israel)',
+    ]) {
+      assert.equal(isProductManager(t), true, t);
+    }
+  });
+});
+
+describe('the seniority ceiling on product roles', () => {
+  test('refuses principal and group product', () => {
+    // "They are always too senior for me." Both were include terms until the
+    // Palo Alto Networks principal roles came through on run 27.
+    for (const t of [
+      'Principal Product Manager',
+      'Principal Product Manager (Cortex Platform)',
+      'Principal Product Manager - Application Security',
+      'Group Product Manager',
+    ]) {
+      assert.equal(isProductManager(t), false, t);
+    }
+  });
+
+  test('refuses them even when another target term is in the title', () => {
+    // An exclude, not just a missing include: otherwise "solutions" or
+    // "customer success" would carry a principal role through.
+    assert.equal(isProductManager('Principal Solutions Architect'), false);
+    assert.equal(isProductManager('Principal Customer Success Manager'), false);
+  });
+
+  test('still keeps the plain and staff-level product roles', () => {
+    assert.equal(isProductManager('Product Manager'), true);
+    assert.equal(isProductManager('Technical Product Manager'), true);
+    assert.equal(isProductManager('Staff Product Manager'), true);
   });
 });

@@ -52,7 +52,13 @@ export const TARGET_ROLES: TitleMatcher = {
     'product manager', 'product owner', 'product management',
     'product lead', 'product leader',
     'associate product manager', 'apm',
-    'senior product', 'staff product', 'group product', 'principal product',
+    // "Staff product" stays: it is occasionally used for an individual-
+    // contributor PM rather than a seniority grade. Principal and group product
+    // are gone — they were included when the profile was widened, which
+    // contradicted the seniority ceiling the exclude list below enforces, and
+    // in this data they are uniformly too senior (three Palo Alto Networks
+    // "Principal Product Manager" roles passed the filter on run 27).
+    'staff product',
     // "Product builder" is how a growing number of startups advertise a hands-on
     // PM role, especially where the job spans product and delivery.
     'product builder', 'product builders', 'founding product manager',
@@ -83,6 +89,27 @@ export const TARGET_ROLES: TitleMatcher = {
     // Test and QA automation: the word matches, the job does not.
     'test automation', 'qa automation', 'automation qa', 'automation tester',
     'automation testing',
+    // Seniority the user does not have. "I'm not a senior anything" — said
+    // while rejecting a Senior Partner Solutions Architect posting. "Senior"
+    // was an include term ("senior product") until this; it is now the
+    // opposite, which is why that term is gone from the list above.
+    'senior', 'sr', 'team lead', 'team leader', 'partner',
+    // Named as excludes, not merely dropped from the includes, so they are
+    // refused even when another term in the title would otherwise match —
+    // "Principal Product Manager, Solutions" must not slip through on
+    // "solutions". The user's words: "they are always too senior for me."
+    'principal', 'group product',
+    // Somewhere that is not here. Titles rarely name a country outright —
+    // they name a region — so both are listed. The location filter already
+    // drops postings whose stated location is abroad; this catches the ones
+    // that only say it in the title.
+    'apac', 'emea', 'latam', 'international', 'worldwide',
+    'india', 'singapore', 'germany', 'poland', 'romania', 'bulgaria', 'ukraine',
+    'cyprus', 'spain', 'france', 'netherlands', 'canada', 'australia', 'japan',
+    'china', 'brazil', 'mexico', 'uae', 'dubai', 'turkey', 'greece', 'italy',
+    'sweden', 'ireland', 'portugal', 'czechia', 'hungary', 'austria', 'belgium',
+    'switzerland', 'denmark', 'norway', 'finland', 'estonia', 'lithuania',
+    'united states', 'usa', 'united kingdom', 'uk',
     // Executive tier. Excluded deliberately: these are not reachable at the
     // experience level this search targets, and they crowd out the roles that are.
     'vp', 'vp product', 'vice president', 'svp', 'evp',
