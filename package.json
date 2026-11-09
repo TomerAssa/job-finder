@@ -21,7 +21,8 @@
     "all": "tsx src/cli.ts run-all",
     "migrate": "tsx src/cli.ts migrate",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "phone": "bash scripts/phone.sh"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

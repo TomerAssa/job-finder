@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 4311",
+    "dev:tailnet": "next dev -H 127.0.0.1 -p ${JOB_WEB_PORT:-4311}",
     "build": "next build",
-    "start": "next start -p 4311"
+    "start": "next start -p 4311",
+    "start:tailnet": "next start -H 127.0.0.1 -p ${JOB_WEB_PORT:-4311}"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

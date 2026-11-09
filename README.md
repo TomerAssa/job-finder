@@ -45,6 +45,22 @@ cd web && npm run dev           # → http://localhost:4311/setup
 whether your connections are imported, and whether anything has been crawled yet.
 Finishing it clears the demo data.
 
+### Reading it on your phone
+
+```bash
+npm run phone                   # serves the console to your Tailscale devices only
+```
+
+Your phone needs Tailscale signed into the same account. The console is bound to one
+interface and reached over WireGuard; it is never published to the internet, and the
+script refuses to start if anything is listening on all interfaces.
+
+This matters because **the console has no authentication of any kind** — `/setup` can
+write your `.env` and `/search` can start a crawl that spends credits. That is fine for
+your own devices and unacceptable for anyone else's, so do not `tailscale funnel` it or
+share the node. Note that plain `npm run dev` binds *every* interface, which puts the
+console on whatever Wi-Fi you are using.
+
 ### What you need
 
 | | Why | Required |
